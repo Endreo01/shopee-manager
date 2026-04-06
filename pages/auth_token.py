@@ -32,7 +32,7 @@ def render():
         ts = int(time.time())
         path = "/api/v2/shop/auth_partner"
         sign = _sign(path, ts)
-        redirect_url = "https://www.google.com"
+        redirect_url = "https://shopee-manager.streamlit.app"
         auth_url = (
             f"{BASE_URL}{path}"
             f"?partner_id={c['partner_id']}"
