@@ -8,6 +8,19 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+/* Fundo branco + borda visível em todos os inputs */
+div[data-testid="stTextInput"] input,
+div[data-testid="stSelectbox"] > div > div {
+    background-color: #ffffff !important;
+    border: 1.5px solid #b5c8c9 !important;
+    color: #0f3638 !important;
+}
+/* Foco com destaque verde */
+:focus {
+    border-color: #01696f !important;
+    box-shadow: 0 0 0 2px rgba(1,105,111,0.15) !important;
+}
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
