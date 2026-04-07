@@ -3,92 +3,102 @@ import shopee_client as sc
 
 
 def render():
-    st.markdown('<p class="section-title">🔄 Token / Autorização OAuth</p>', unsafe_allow_html=True)
-    st.markdown('<p class="section-sub">Autorize o app na sua conta Shopee e gerencie tokens</p>', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">🔄 Token / Auth</p>', unsafe_allow_html=True)
+    st.markdown('<p class="section-sub">Geração e renovação de tokens de acesso à API Shopee</p>', unsafe_allow_html=True)
 
-    # --- Auto-detect code e shop_id na URL (retorno automático da Shopee) ---
-    params = st.query_params
-    if "code" in params and "shop_id" in params:
-        code    = params["code"]
-        shop_id = params["shop_id"]
-        st.info("🔄 Retorno detectado da Shopee! Trocando code por token automaticamente...")
-        with st.spinner("Obtendo token..."):
-            result = sc.get_access_token_from_code(code, int(shop_id))
-        if "access_token" in result:
-            st.balloons()
-            st.success("✅ Autenticação concluída com sucesso!")
-            st.query_params.clear()
-            st.rerun()
+    # ── Passo 1: Gerar URL de Autorização ──────────────────────────────────
+    st.markdown("### Passo 1 — Autorizar o App na Shopee")
+    st.info("Clique no botão abaixo para gerar a URL de autorização. Abra o link, autorize o app e você será redirecionado de volta com um `code` na URL.")
+
+    if st.button("🔗 Gerar URL de Autorização", use_container_width=False):
+        if not st.session_state.get("partner_id") or not st.session_state.get("partner_key"):
+            st.warning("⚠️ Configure e salve o Partner ID e Partner Key em **Configurações** primeiro.")
         else:
-            st.error(f"❌ Falha na troca de token: {result}")
-        st.stop()
-
-    st.info("""
-    **Fluxo OAuth Shopee:**
-    1. Clique em **Gerar URL de Autorização** abaixo
-    2. Acesse a URL gerada e autorize o app na sua conta Shopee
-    3. Você será redirecionado de volta automaticamente com o token
-    4. Se não redirecionar, cole o `code` manualmente no Passo 2
-    """)
+            url = sc.get_auth_url()
+            st.success("URL gerada com sucesso!")
+            st.markdown(f"[👉 Clique aqui para autorizar o app na Shopee]({url})", unsafe_allow_html=False)
+            st.code(url, language="text")
 
     st.divider()
-    st.markdown("#### Passo 1 — Gerar URL de autorização")
-    if st.button("🔗 Gerar URL de Autorização"):
-        if not st.session_state.get("partner_id"):
-            st.warning("Configure o Partner ID em ⚙️ Configurações primeiro.")
-        else:
-            auth_url = sc.get_auth_url("https://shopee-manager.streamlit.app")
-            st.markdown("**Acesse esta URL:**")
-            st.code(auth_url)
-            st.caption("Após autorizar, você será redirecionado de volta com o token automaticamente.")
 
-    st.divider()
-    st.markdown("#### Passo 2 — Inserir o código manualmente (fallback)")
-    st.caption("Use apenas se o redirecionamento automático não funcionou.")
+    # ── Passo 2: Trocar Code por Token ─────────────────────────────────────
+    st.markdown("### Passo 2 — Trocar o Code pelo Access Token")
+    st.info("Após autorizar, copie o `code` que aparece na URL de retorno e cole abaixo.")
+
     col1, col2 = st.columns(2)
     with col1:
-        auth_code = st.text_input("Código de autorização (code)", placeholder="Cole aqui o código recebido na URL de retorno")
+        code_input = st.text_input("Code (retornado pela Shopee na URL)", placeholder="Cole o code aqui")
     with col2:
-        shop_id_input = st.text_input("Shop ID", placeholder="Número da loja que autorizou")
+        shop_id_input = st.text_input(
+            "Shop ID (confirme)",
+            value=st.session_state.get("shop_id", ""),
+            placeholder="Ex: 560644869"
+        )
 
-    if st.button("🔑 Obter Access Token"):
-        if not auth_code or not shop_id_input:
-            st.warning("Preencha o code e o Shop ID.")
+    if st.button("🔑 Trocar Code por Access Token", use_container_width=False):
+        if not code_input:
+            st.warning("Cole o code gerado pela Shopee.")
         else:
             with st.spinner("Trocando code por token..."):
-                result = sc.get_access_token_from_code(auth_code.strip(), int(shop_id_input.strip()))
-            if "error" in result:
-                st.error(f"❌ Erro: {result['error']}")
-            elif "access_token" in result:
+                result = sc.exchange_code_for_token(code_input, shop_id=shop_id_input or None)
+
+            st.write("Retorno bruto:")
+            st.json(result)
+
+            if result.get("access_token"):
                 st.success("✅ Access Token obtido com sucesso!")
-                st.code(f"Novo token: {result['access_token'][:20]}...")
-                st.rerun()
+                st.write(f"**Access Token:** `{result['access_token']}`")
+                st.write(f"**Refresh Token:** `{result.get('refresh_token', '')}`")
+                st.info("Os tokens foram salvos automaticamente na sessão. Vá em **Configurações** e salve para persistir.")
             else:
-                st.warning(f"Resposta inesperada: {result}")
+                st.error(f"❌ Falha: {result.get('error', 'Erro desconhecido')}")
 
     st.divider()
-    st.markdown("#### Renovar Access Token (usando Refresh Token)")
-    if st.button("🔄 Renovar Access Token"):
-        if not st.session_state.get("refresh_token"):
-            st.warning("Nenhum Refresh Token configurado. Vá em ⚙️ Configurações.")
+
+    # ── Passo 3: Renovar Access Token ──────────────────────────────────────
+    st.markdown("### Renovar Access Token (usando Refresh Token)")
+    st.info("Se o Access Token expirou (validade: 4 horas), use o Refresh Token para obter um novo sem precisar re-autorizar.")
+
+    refresh_input = st.text_input(
+        "Refresh Token",
+        value=st.session_state.get("refresh_token", ""),
+        type="password",
+        placeholder="Cole aqui ou já está preenchido da sessão"
+    )
+
+    if st.button("🔄 Renovar Access Token", use_container_width=False):
+        token_to_use = refresh_input.strip()
+        if not token_to_use:
+            st.warning("⚠️ Refresh Token vazio. Cole o Refresh Token acima antes de renovar.")
+        elif not st.session_state.get("partner_id") or not st.session_state.get("partner_key"):
+            st.warning("⚠️ Configure e salve as credenciais em **Configurações** primeiro.")
         else:
+            # Garante que o refresh token está na sessão antes de chamar
+            st.session_state["refresh_token"] = token_to_use
+
             with st.spinner("Renovando token..."):
                 result = sc.refresh_access_token()
-            if "error" in result:
-                st.error(f"Erro: {result['error']}")
-            elif "access_token" in result:
+
+            st.write("Retorno bruto:")
+            st.json(result)
+
+            if result.get("access_token"):
                 st.success("✅ Access Token renovado com sucesso!")
-                st.code(f"Novo token: {result['access_token'][:20]}...")
-                st.rerun()
+                st.write(f"**Novo Access Token:** `{result['access_token']}`")
+                st.write(f"**Novo Refresh Token:** `{result.get('refresh_token', '')}`")
+                st.info("Tokens atualizados na sessão. Vá em **Configurações** e salve para persistir.")
             else:
-                st.warning(f"Resposta: {result}")
+                st.error(f"❌ Falha ao renovar: {result.get('error', 'Erro desconhecido')}")
+                if result.get("details"):
+                    st.write("Detalhes:")
+                    st.json(result["details"])
 
     st.divider()
-    st.markdown("#### Status atual dos tokens")
-    col1, col2 = st.columns(2)
-    with col1:
+    st.markdown("### 📋 Tokens ativos na sessão")
+    col_a, col_b = st.columns(2)
+    with col_a:
         at = st.session_state.get("access_token", "")
-        st.metric("Access Token", "✅ Configurado" if at else "❌ Não configurado")
-    with col2:
+        st.metric("Access Token", "✅ Preenchido" if at else "❌ Vazio")
+    with col_b:
         rt = st.session_state.get("refresh_token", "")
-        st.metric("Refresh Token", "✅ Configurado" if rt else "❌ Não configurado")
+        st.metric("Refresh Token", "✅ Preenchido" if rt else "❌ Vazio")
