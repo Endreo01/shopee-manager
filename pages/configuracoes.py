@@ -73,32 +73,30 @@ def render():
                 st.success("✅ Configurações salvas com sucesso!")
 
     with col_btn2:
-        if st.button("🔍 Testar Conexão", use_container_width=True):
-            if not partner_id or not partner_key or not shop_id:
-                st.warning("Preencha e salve Partner ID, Partner Key e Shop ID antes de testar.")
+    if st.button("🔍 Testar Conexão", use_container_width=True):
+        if not partner_id or not partner_key or not shop_id:
+            st.warning("Preencha e salve Partner ID, Partner Key e Shop ID antes de testar.")
+        else:
+            st.session_state["partner_id"] = partner_id.strip()
+            st.session_state["partner_key"] = partner_key.strip()
+            st.session_state["shop_id"] = shop_id.strip()
+            st.session_state["access_token"] = access_token.strip()
+            st.session_state["refresh_token"] = refresh_token.strip()
+            st.session_state["authenticated"] = bool(access_token.strip())
+
+            with st.spinner("Testando conexão com a Shopee..."):
+                result = sc.get_shop_info()
+
+            st.write("Retorno bruto da API:")
+            st.json(result)
+
+            if result.get("error"):  # ← CORREÇÃO AQUI
+                st.error(f"❌ Erro ao conectar: {result['error']}")
+                if result.get("details"):
+                    st.write("Detalhes do erro:")
+                    st.json(result["details"])
             else:
-                st.session_state["partner_id"] = partner_id.strip()
-                st.session_state["partner_key"] = partner_key.strip()
-                st.session_state["shop_id"] = shop_id.strip()
-                st.session_state["access_token"] = access_token.strip()
-                st.session_state["refresh_token"] = refresh_token.strip()
-                st.session_state["authenticated"] = bool(access_token.strip())
-
-                with st.spinner("Testando conexão com a Shopee..."):
-                    result = sc.get_shop_info()
-
-                st.write("Retorno bruto da API:")
-                st.json(result)
-
-                if "error" in result:
-                    st.error(f"❌ Erro ao conectar: {result['error']}")
-                    if result.get("details"):
-                        st.write("Detalhes do erro:")
-                        st.json(result["details"])
-                else:
-                    st.success("✅ Conexão estabelecida com sucesso!")
-                    st.write("Resposta tratada:")
-                    st.json(result.get("response", result))
+                st.success(f"✅ Conectado com sucesso! Loja: **{result.get('shop_name', '')}** | Região: {result.get('region', '')} | Status: {result.get('status', '')}")
 
     st.divider()
     st.markdown("### 🔒 Usando Streamlit Secrets (Recomendado para equipe)")
