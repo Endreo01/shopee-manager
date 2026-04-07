@@ -171,6 +171,11 @@ def toggle_campaign(campaign_id: int, operation: str) -> dict:
     return _call("POST", "/api/v2/ads/update_campaign_status", body=body)
 
 
+def get_item_extra_info(item_ids: list) -> dict:
+    return _call("GET", "/api/v2/product/get_item_extra_info", {
+        "item_id_list": ",".join(map(str, item_ids))
+    })
+
 def get_auth_url() -> str:
     creds = _get_credentials()
     ts = int(time.time())
