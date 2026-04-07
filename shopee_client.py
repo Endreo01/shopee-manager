@@ -4,7 +4,7 @@ import time
 import requests
 import streamlit as st
 
-BASE_URL = "https://openplatform.shopee.com"
+BASE_URL = "https://partner.shopeemobile.com"
 APP_REDIRECT = "https://shopee-manager.streamlit.app"
 
 
