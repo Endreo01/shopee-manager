@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 
 st.set_page_config(
     page_title="Zanup · Shopee Manager",
@@ -13,6 +14,10 @@ st.markdown("""
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 [data-testid="stSidebar"] { background: #0f3638; }
 [data-testid="stSidebar"] * { color: #e0f0f1 !important; }
+
+/* ESSA LINHA ESCONDE O MENU NATIVO DO STREAMLIT QUE ESTAVA DUPLICANDO AS PÁGINAS */
+[data-testid="stSidebarNav"] { display: none !important; }
+
 [data-testid="stMetric"] {
     background: #f9f8f5; border: 1px solid #dcd9d5;
     border-radius: 12px; padding: 16px !important;
@@ -31,6 +36,27 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .badge-err { display:inline-block; background:#e0ced7; color:#561740; border-radius:20px; padding:2px 12px; font-size:13px; font-weight:600; }
 </style>
 """, unsafe_allow_html=True)
+
+# ── Carrega os Secrets automaticamente ──────────────────
+def _load_secrets():
+    if st.session_state.get("_secrets_loaded"):
+        return
+    try:
+        shopee = st.secrets.get("shopee", {})
+        keys = ["partner_id", "partner_key", "shop_id", "access_token", "refresh_token"]
+        for k in keys:
+            if shopee.get(k) and not st.session_state.get(k):
+                st.session_state[k] = shopee[k]
+        
+        if st.session_state.get("access_token"):
+            st.session_state["authenticated"] = True
+            
+        st.session_state["_secrets_loaded"] = True
+    except Exception:
+        pass
+
+# Executa o carregamento antes de montar a página
+_load_secrets()
 
 # ── Estado de sessão ──────────────────────────────────
 for k, v in {"authenticated": False, "partner_id": "", "partner_key": "",
