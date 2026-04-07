@@ -264,3 +264,54 @@ def refresh_access_token() -> dict:
         return data
     except Exception as e:
         return {"error": str(e)}
+
+# Adicionar ao final do seu shopee_client.py
+
+def get_all_item_ids(status: str = "NORMAL") -> list[int]:
+    """Pagina automaticamente e retorna todos os item_ids da loja."""
+    all_ids = []
+    offset = 0
+    while True:
+        result = get_item_list(offset=offset, page_size=100, status=status)
+        items = result.get("response", {}).get("item", [])
+        if not items:
+            break
+        all_ids.extend(i["item_id"] for i in items)
+        if not result.get("response", {}).get("has_next_page", False):
+            break
+        offset += 100
+    return all_ids
+
+
+def search_item(keyword: str, search_by: str = "name", offset: int = 0, page_size: int = 40) -> dict:
+    """
+    Busca produtos por nome ou SKU.
+    search_by: 'name' → item_name | 'sku' → item_sku
+    """
+    extra = {"offset": offset, "page_size": page_size}
+    if search_by == "sku":
+        extra["item_sku"] = keyword
+    else:
+        extra["item_name"] = keyword
+    return _call("GET", "/api/v2/product/search_item", extra)
+
+
+def get_items_with_details(item_ids: list[int]) -> list[dict]:
+    """Busca base_info + extra_info em lotes de 50 e mescla num único dict por produto."""
+    all_items = []
+    for i in range(0, len(item_ids), 50):
+        batch = item_ids[i:i + 50]
+
+        base_list  = get_item_base_info(batch).get("response", {}).get("item_list", [])
+        extra_list = get_item_extra_info(batch).get("response", {}).get("item_extra_info_list", [])
+        extra_map  = {e["item_id"]: e for e in extra_list}
+
+        for item in base_list:
+            extra = extra_map.get(item.get("item_id"), {})
+            item["view_count"]      = extra.get("view_count", 0)
+            item["liked_count"]     = extra.get("liked_count", item.get("liked_count", 0))
+            item["sold_count"]      = extra.get("sold_count", 0)
+            item["conversion_rate"] = extra.get("conversion_rate", 0)
+            all_items.append(item)
+
+    return all_items
