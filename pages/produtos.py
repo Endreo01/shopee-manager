@@ -2,12 +2,58 @@ import streamlit as st
 import shopee_client as sc
 import pandas as pd
 
+# CSS local — corrige cor dos inputs e alinhamento
+_CSS = """
+<style>
+/* ── Inputs e Selects com contraste visível ── */
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input {
+    background-color: #ffffff !important;
+    border: 1.5px solid #b5c8c9 !important;
+    border-radius: 8px !important;
+    color: #0f3638 !important;
+    padding: 8px 12px !important;
+}
+div[data-testid="stTextInput"] input:focus,
+div[data-testid="stNumberInput"] input:focus {
+    border-color: #01696f !important;
+    box-shadow: 0 0 0 2px rgba(1,105,111,0.15) !important;
+}
+div[data-testid="stSelectbox"] > div > div {
+    background-color: #ffffff !important;
+    border: 1.5px solid #b5c8c9 !important;
+    border-radius: 8px !important;
+    color: #0f3638 !important;
+}
+div[data-testid="stSelectbox"] > div > div:focus-within {
+    border-color: #01696f !important;
+    box-shadow: 0 0 0 2px rgba(1,105,111,0.15) !important;
+}
+
+/* ── Labels dos campos ── */
+div[data-testid="stTextInput"] label,
+div[data-testid="stSelectbox"] label,
+div[data-testid="stMultiSelect"] label {
+    color: #0f3638 !important;
+    font-weight: 500 !important;
+    font-size: 14px !important;
+}
+
+/* ── Placeholder mais visível ── */
+div[data-testid="stTextInput"] input::placeholder {
+    color: #a0adb0 !important;
+}
+</style>
+"""
+
 
 def render():
+    st.markdown(_CSS, unsafe_allow_html=True)
+
     st.markdown('<p class="section-title">🛍️ Produtos</p>', unsafe_allow_html=True)
     st.markdown('<p class="section-sub">Listagem e busca de produtos da sua loja Shopee</p>', unsafe_allow_html=True)
 
-    # ── Filtros / Busca ───────────────────────────────────────────────────────
+    # ── Filtros / Busca — todos com label visível para alinhar na mesma altura ──
     col_status, col_tipo, col_busca = st.columns([1, 1.2, 2.5])
 
     with col_status:
@@ -23,13 +69,13 @@ def render():
     with col_busca:
         placeholder_map = {
             "Nome":            "Digite parte do nome...",
-            "SKU do Vendedor": "Ex: SKU-001",
-            "ID da Shopee":    "Ex: 123456789  (separe por vírgula para buscar vários)",
+            "SKU do Vendedor": "Ex: 15314",
+            "ID da Shopee":    "Ex: 41864392939  (separe por vírgula para buscar vários)",
         }
+        # Label "Termo" garante alinhamento com os selectboxes acima
         busca = st.text_input(
-            "Buscar",
+            "Termo de busca",
             placeholder=placeholder_map[tipo_busca],
-            label_visibility="collapsed",
         )
 
     carregar_todos = st.checkbox(
@@ -55,24 +101,49 @@ def render():
         if tipo_busca == "ID da Shopee" and busca.strip():
             raw_ids = [x.strip() for x in busca.replace(",", " ").split() if x.strip().isdigit()]
             if not raw_ids:
-                st.error("❌ ID inválido. Digite apenas números (separe múltiplos por vírgula).")
+                st.error("❌ ID inválido. Digite apenas números.")
                 return
             item_ids = [int(i) for i in raw_ids]
 
-        # ── ROTA 2: Busca por SKU via search_item ─────────────────────────────
+        # ── ROTA 2: Busca por SKU ─────────────────────────────────────────────
         elif tipo_busca == "SKU do Vendedor" and busca.strip():
-            with st.spinner("Buscando produto pelo SKU..."):
-                res = sc.search_item(busca.strip(), search_by="sku")
-                if res.get("error"):
-                    st.error(f"❌ Erro: {res['error']}")
-                    return
+            sku_alvo = busca.strip().lower()
+
+            with st.spinner("Buscando pelo SKU..."):
+                res = sc.search_item(sku_alvo, search_by="sku")
                 id_list = res.get("response", {}).get("item_id_list", [])
-                if not id_list:
+
+            if id_list:
+                item_ids = [i["item_id"] for i in id_list]
+            else:
+                st.info("⚙️ Buscando em todo o catálogo pelo SKU (fallback)...")
+                with st.spinner("Carregando catálogo para busca por SKU..."):
+                    all_ids_temp = []
+                    offset = 0
+                    while True:
+                        result = sc.get_item_list(offset=offset, page_size=100, status=status)
+                        items_temp = result.get("response", {}).get("item", [])
+                        if not items_temp:
+                            break
+                        all_ids_temp.extend(i["item_id"] for i in items_temp)
+                        if not result.get("response", {}).get("has_next_page", False) or not carregar_todos:
+                            break
+                        offset += 100
+
+                    matched_ids = []
+                    for i in range(0, len(all_ids_temp), 50):
+                        batch = all_ids_temp[i:i + 50]
+                        base_res = sc.get_item_base_info(batch)
+                        for it in base_res.get("response", {}).get("item_list", []):
+                            if sku_alvo in (it.get("item_sku") or "").lower():
+                                matched_ids.append(it["item_id"])
+
+                if not matched_ids:
                     st.info(f"Nenhum produto encontrado com o SKU **{busca}**.")
                     return
-                item_ids = [i["item_id"] for i in id_list]
+                item_ids = matched_ids
 
-        # ── ROTA 3: Lista normal (com filtro de nome opcional) ────────────────
+        # ── ROTA 3: Lista normal ──────────────────────────────────────────────
         else:
             all_items = []
             offset = 0
@@ -111,7 +182,7 @@ def render():
 
             item_ids = [i["item_id"] for i in all_items]
 
-        # ── Busca base info em lotes de 50 ────────────────────────────────────
+        # ── Base info ─────────────────────────────────────────────────────────
         detail_items = []
         with st.spinner(f"Carregando informações de {len(item_ids)} produto(s)..."):
             p2 = st.progress(0, text="Base info...")
@@ -122,16 +193,20 @@ def render():
                 p2.progress(min((i + 50) / len(item_ids), 1.0))
             p2.empty()
 
-        # ── Busca extra info em lotes de 50 ───────────────────────────────────
-        # Campos corretos da API: view_count, sold_count, liked_count, conversion_rate
+        # ── Extra info ────────────────────────────────────────────────────────
         extra_map = {}
         with st.spinner("Carregando dados de performance..."):
             p3 = st.progress(0, text="Performance...")
             for i in range(0, len(item_ids), 50):
                 batch = item_ids[i:i + 50]
                 res = sc.get_item_extra_info(batch)
-                # A API retorna "item_extra_info_list" (não "item_list")
-                for ei in res.get("response", {}).get("item_extra_info_list", []):
+                response_extra = res.get("response", {})
+                extra_items = (
+                    response_extra.get("item_extra_info_list")
+                    or response_extra.get("item_list")
+                    or []
+                )
+                for ei in extra_items:
                     extra_map[ei.get("item_id")] = ei
                 p3.progress(min((i + 50) / len(item_ids), 1.0))
             p3.empty()
@@ -142,24 +217,24 @@ def render():
             item_id = item.get("item_id")
             extra = extra_map.get(item_id, {})
 
-            # Estoque
             stock_info = item.get("stock_info_v2", {})
             seller_stock_list = stock_info.get("seller_stock", [])
             seller_stock = seller_stock_list[0].get("stock", 0) if seller_stock_list else 0
             shopee_stock_list = stock_info.get("shopee_stock", [])
             shopee_stock = shopee_stock_list[0].get("stock", 0) if shopee_stock_list else 0
 
-            # Preço
             price_info = item.get("price_info", [{}])
-            preco = (price_info[0].get("current_price", 0) / 100_000) if price_info else 0
+            preco = price_info[0].get("current_price", 0) if price_info else 0
 
-            # Performance — nomes corretos da API Shopee
-            views    = extra.get("view_count", 0) or 0
-            sold     = extra.get("sold_count", 0) or 0
-            likes    = extra.get("liked_count", 0) or 0
+            views = extra.get("view_count") or extra.get("page_view") or 0
+            sold  = extra.get("sold_count") or extra.get("sold")      or 0
+            likes = extra.get("liked_count") or extra.get("like_count") or 0
+
             conv_raw = extra.get("conversion_rate", 0) or 0
-            # conversion_rate já vem como decimal (ex: 0.05 = 5%). Se vier como inteiro, ajusta.
-            conversion = round(conv_raw * 100, 2) if conv_raw < 1 else round(conv_raw, 2)
+            if conv_raw > 0:
+                conversion = round(conv_raw * 100, 2) if conv_raw < 1 else round(conv_raw, 2)
+            else:
+                conversion = round((sold / views * 100), 2) if views and views > 0 else 0.0
 
             rows.append({
                 "ID":            item_id,
@@ -177,7 +252,6 @@ def render():
 
         df = pd.DataFrame(rows)
 
-        # Filtro por nome se busca for do tipo Nome
         if tipo_busca == "Nome" and busca.strip():
             df = df[df["Nome"].str.contains(busca.strip(), case=False, na=False)]
 
@@ -191,7 +265,6 @@ def render():
         filtro = st.text_input("🔎 Filtrar por nome na tabela", key="filtro_tabela")
         df_exibir = df[df["Nome"].str.contains(filtro, case=False, na=False)] if filtro else df
 
-        # Métricas rápidas
         m1, m2, m3, m4, m5, m6 = st.columns(6)
         m1.metric("📦 Produtos",      f"{len(df_exibir):,}")
         m2.metric("🏷 Est. Vendedor", f"{df_exibir['Est. Vendedor'].sum():,}")
