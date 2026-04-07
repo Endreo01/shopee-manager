@@ -22,7 +22,6 @@ def _get_credentials():
 
 
 def _token_needs_refresh() -> bool:
-    """Retorna True se o token está ausente ou expira em menos de 30 minutos."""
     expire_time = st.session_state.get("token_expire_time", 0)
     if not expire_time:
         return False
@@ -30,7 +29,6 @@ def _token_needs_refresh() -> bool:
 
 
 def _auto_refresh_token():
-    """Tenta renovar o token automaticamente se necessário."""
     if not _token_needs_refresh():
         return
     refresh_token = st.session_state.get("refresh_token", "")
@@ -60,10 +58,7 @@ def _call(method: str, api_path: str, params: dict | None = None, body: dict | N
     if api_path != "/api/v2/shop/auth_partner" and not creds["access_token"]:
         return {"error": "Access Token ausente. Gere o token na aba Token / Auth."}
 
-    # Renovação automática antes de chamar
     _auto_refresh_token()
-
-    # Re-lê as credenciais após possível renovação
     creds = _get_credentials()
 
     ts = int(time.time())
@@ -102,7 +97,6 @@ def _call(method: str, api_path: str, params: dict | None = None, body: dict | N
                 "details": data,
             }
 
-        # Salva expire_time se a resposta trouxer
         if data.get("expire_time"):
             st.session_state["token_expire_time"] = data["expire_time"]
 
@@ -110,6 +104,8 @@ def _call(method: str, api_path: str, params: dict | None = None, body: dict | N
     except Exception as e:
         return {"error": str(e)}
 
+
+# ── Endpoints existentes ──────────────────────────────────────────────────────
 
 def get_shop_info() -> dict:
     return _call("GET", "/api/v2/shop/get_shop_info")
@@ -125,6 +121,12 @@ def get_item_list(offset: int = 0, page_size: int = 50, status: str = "NORMAL") 
 
 def get_item_base_info(item_ids: list) -> dict:
     return _call("GET", "/api/v2/product/get_item_base_info", {
+        "item_id_list": ",".join(map(str, item_ids))
+    })
+
+
+def get_item_extra_info(item_ids: list) -> dict:
+    return _call("GET", "/api/v2/product/get_item_extra_info", {
         "item_id_list": ",".join(map(str, item_ids))
     })
 
@@ -170,11 +172,6 @@ def toggle_campaign(campaign_id: int, operation: str) -> dict:
     body = {"campaign_id": campaign_id, "operation": operation}
     return _call("POST", "/api/v2/ads/update_campaign_status", body=body)
 
-
-def get_item_extra_info(item_ids: list) -> dict:
-    return _call("GET", "/api/v2/product/get_item_extra_info", {
-        "item_id_list": ",".join(map(str, item_ids))
-    })
 
 def get_auth_url() -> str:
     creds = _get_credentials()
@@ -265,7 +262,8 @@ def refresh_access_token() -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-# Adicionar ao final do seu shopee_client.py
+
+# ── Funções novas ─────────────────────────────────────────────────────────────
 
 def get_all_item_ids(status: str = "NORMAL") -> list[int]:
     """Pagina automaticamente e retorna todos os item_ids da loja."""
@@ -286,7 +284,7 @@ def get_all_item_ids(status: str = "NORMAL") -> list[int]:
 def search_item(keyword: str, search_by: str = "name", offset: int = 0, page_size: int = 40) -> dict:
     """
     Busca produtos por nome ou SKU.
-    search_by: 'name' → item_name | 'sku' → item_sku
+    search_by: 'name' → item_name  |  'sku' → item_sku
     """
     extra = {"offset": offset, "page_size": page_size}
     if search_by == "sku":
@@ -301,11 +299,9 @@ def get_items_with_details(item_ids: list[int]) -> list[dict]:
     all_items = []
     for i in range(0, len(item_ids), 50):
         batch = item_ids[i:i + 50]
-
         base_list  = get_item_base_info(batch).get("response", {}).get("item_list", [])
         extra_list = get_item_extra_info(batch).get("response", {}).get("item_extra_info_list", [])
         extra_map  = {e["item_id"]: e for e in extra_list}
-
         for item in base_list:
             extra = extra_map.get(item.get("item_id"), {})
             item["view_count"]      = extra.get("view_count", 0)
@@ -313,5 +309,4 @@ def get_items_with_details(item_ids: list[int]) -> list[dict]:
             item["sold_count"]      = extra.get("sold_count", 0)
             item["conversion_rate"] = extra.get("conversion_rate", 0)
             all_items.append(item)
-
     return all_items
