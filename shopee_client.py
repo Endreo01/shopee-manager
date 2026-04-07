@@ -7,6 +7,9 @@ import streamlit as st
 BASE_URL = "https://partner.shopeemobile.com"
 APP_REDIRECT = "https://shopee-manager.streamlit.app"
 
+# Renova se faltar menos de 30 minutos para expirar
+TOKEN_REFRESH_THRESHOLD = 30 * 60  # segundos
+
 
 def _get_credentials():
     return {
@@ -16,6 +19,26 @@ def _get_credentials():
         "access_token": st.session_state.get("access_token", ""),
         "refresh_token": st.session_state.get("refresh_token", ""),
     }
+
+
+def _token_needs_refresh() -> bool:
+    """Retorna True se o token está ausente ou expira em menos de 30 minutos."""
+    expire_time = st.session_state.get("token_expire_time", 0)
+    if not expire_time:
+        return False
+    return (int(expire_time) - int(time.time())) < TOKEN_REFRESH_THRESHOLD
+
+
+def _auto_refresh_token():
+    """Tenta renovar o token automaticamente se necessário."""
+    if not _token_needs_refresh():
+        return
+    refresh_token = st.session_state.get("refresh_token", "")
+    if not refresh_token:
+        return
+    result = refresh_access_token()
+    if result.get("access_token"):
+        st.toast("🔄 Access Token renovado automaticamente!", icon="✅")
 
 
 def _sign(api_path: str, timestamp: int, access_token: str = "", shop_id: int = 0) -> str:
@@ -35,7 +58,13 @@ def _call(method: str, api_path: str, params: dict | None = None, body: dict | N
         return {"error": "Partner ID, Partner Key e Shop ID são obrigatórios."}
 
     if api_path != "/api/v2/shop/auth_partner" and not creds["access_token"]:
-        return {"error": "Access Token ausente. Gere o token na aba Token / Auth e salve em Configurações."}
+        return {"error": "Access Token ausente. Gere o token na aba Token / Auth."}
+
+    # Renovação automática antes de chamar
+    _auto_refresh_token()
+
+    # Re-lê as credenciais após possível renovação
+    creds = _get_credentials()
 
     ts = int(time.time())
     sign = _sign(api_path, ts, creds["access_token"], creds["shop_id"])
@@ -72,6 +101,10 @@ def _call(method: str, api_path: str, params: dict | None = None, body: dict | N
                 "error": data.get("message") or data.get("error"),
                 "details": data,
             }
+
+        # Salva expire_time se a resposta trouxer
+        if data.get("expire_time"):
+            st.session_state["token_expire_time"] = data["expire_time"]
 
         return data
     except Exception as e:
@@ -169,16 +202,8 @@ def exchange_code_for_token(code: str, shop_id: int | None = None) -> dict:
         hashlib.sha256,
     ).hexdigest()
 
-    params = {
-        "partner_id": creds["partner_id"],
-        "timestamp": ts,
-        "sign": sign,
-    }
-    body = {
-        "code": code,
-        "partner_id": creds["partner_id"],
-        "shop_id": use_shop_id,
-    }
+    params = {"partner_id": creds["partner_id"], "timestamp": ts, "sign": sign}
+    body = {"code": code, "partner_id": creds["partner_id"], "shop_id": use_shop_id}
 
     try:
         resp = requests.post(f"{BASE_URL}{path}", params=params, json=body, timeout=30)
@@ -187,14 +212,14 @@ def exchange_code_for_token(code: str, shop_id: int | None = None) -> dict:
             return {
                 "error": data.get("message") or data.get("error") or f"HTTP {resp.status_code}",
                 "details": data,
-                "status_code": resp.status_code,
             }
-
         if data.get("access_token"):
             st.session_state["access_token"] = data["access_token"]
             st.session_state["refresh_token"] = data.get("refresh_token", "")
             st.session_state["shop_id"] = str(use_shop_id)
             st.session_state["authenticated"] = True
+            if data.get("expire_time"):
+                st.session_state["token_expire_time"] = data["expire_time"]
         return data
     except Exception as e:
         return {"error": str(e)}
@@ -210,11 +235,7 @@ def refresh_access_token() -> dict:
         base.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
-    params = {
-        "partner_id": creds["partner_id"],
-        "timestamp": ts,
-        "sign": sign,
-    }
+    params = {"partner_id": creds["partner_id"], "timestamp": ts, "sign": sign}
     body = {
         "refresh_token": creds["refresh_token"],
         "partner_id": creds["partner_id"],
@@ -228,12 +249,13 @@ def refresh_access_token() -> dict:
             return {
                 "error": data.get("message") or data.get("error") or f"HTTP {resp.status_code}",
                 "details": data,
-                "status_code": resp.status_code,
             }
         if data.get("access_token"):
             st.session_state["access_token"] = data["access_token"]
             st.session_state["refresh_token"] = data.get("refresh_token", creds["refresh_token"])
             st.session_state["authenticated"] = True
+            if data.get("expire_time"):
+                st.session_state["token_expire_time"] = data["expire_time"]
         return data
     except Exception as e:
         return {"error": str(e)}
