@@ -5,19 +5,29 @@ import requests
 import streamlit as st
 
 
-# ── Credenciais ───────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _safe_int(val):
+    """Converte para int com segurança, removendo espaços e caracteres invisíveis."""
+    try:
+        return int(str(val).strip())
+    except (ValueError, TypeError):
+        return None
+
 
 def _get_creds():
-    """
-    Lê credenciais da session_state (preenchidas em Configurações)
-    com fallback para st.secrets.
-    """
     pid  = st.session_state.get("partner_id")   or _secret("partner_id")
     pkey = st.session_state.get("partner_key")  or _secret("partner_key")
     sid  = st.session_state.get("shop_id")      or _secret("shop_id")
     at   = st.session_state.get("access_token") or _secret("access_token")
     rt   = st.session_state.get("refresh_token")or _secret("refresh_token")
-    return pid, pkey, sid, at, rt
+    return (
+        str(pid).strip()  if pid  else None,
+        str(pkey).strip() if pkey else None,
+        str(sid).strip()  if sid  else None,
+        str(at).strip()   if at   else None,
+        str(rt).strip()   if rt   else None,
+    )
 
 
 def _secret(key):
@@ -38,7 +48,6 @@ def _sign(path, timestamp, access_token, shop_id, partner_id, partner_key):
 
 
 def _sign_no_auth(path, timestamp, partner_id, partner_key):
-    """Assinatura para endpoints que não precisam de access_token/shop_id (ex: get_token)."""
     base = f"{partner_id}{path}{timestamp}"
     return hmac.new(partner_key.encode(), base.encode(), hashlib.sha256).hexdigest()
 
@@ -46,10 +55,6 @@ def _sign_no_auth(path, timestamp, partner_id, partner_key):
 # ── Chamada genérica ──────────────────────────────────────────────────────────
 
 def _call(method, path, extra_params=None, body=None, require_auth=True):
-    """
-    require_auth=True  → inclui access_token + shop_id na assinatura (maioria dos endpoints)
-    require_auth=False → assinatura simples, sem shop_id/access_token (auth endpoints)
-    """
     pid, pkey, sid, at, _ = _get_creds()
 
     if not pid or not pkey:
@@ -57,21 +62,29 @@ def _call(method, path, extra_params=None, body=None, require_auth=True):
     if require_auth and (not sid or not at):
         return {"error": "Shop ID / Access Token não configurados. Acesse ⚙️ Configurações."}
 
+    pid_int = _safe_int(pid)
+    sid_int = _safe_int(sid)
+
+    if pid_int is None:
+        return {"error": f"Partner ID inválido: '{pid}'. Deve ser numérico."}
+    if require_auth and sid_int is None:
+        return {"error": f"Shop ID inválido: '{sid}'. Deve ser numérico."}
+
     timestamp = int(time.time())
 
     if require_auth:
-        sign = _sign(path, timestamp, at, int(sid), int(pid), pkey)
+        sign = _sign(path, timestamp, at, sid_int, pid_int, pkey)
         params = {
-            "partner_id":   int(pid),
+            "partner_id":   pid_int,
             "timestamp":    timestamp,
             "access_token": at,
-            "shop_id":      int(sid),
+            "shop_id":      sid_int,
             "sign":         sign,
         }
     else:
-        sign = _sign_no_auth(path, timestamp, int(pid), pkey)
+        sign = _sign_no_auth(path, timestamp, pid_int, pkey)
         params = {
-            "partner_id": int(pid),
+            "partner_id": pid_int,
             "timestamp":  timestamp,
             "sign":       sign,
         }
@@ -101,7 +114,6 @@ def _call(method, path, extra_params=None, body=None, require_auth=True):
 # ── Shop ──────────────────────────────────────────────────────────────────────
 
 def get_shop_info():
-    """Retorna informações básicas da loja (nome, região, status)."""
     result = _call("GET", "/api/v2/shop/get_shop_info")
     if result.get("error"):
         return result
@@ -117,12 +129,11 @@ def get_shop_info():
 # ── Auth / Token ──────────────────────────────────────────────────────────────
 
 def get_auth_url():
-    """Gera a URL de autorização OAuth da Shopee."""
     pid, pkey, _, _, _ = _get_creds()
     timestamp = int(time.time())
-    redirect  = "https://localhost"   # ajuste para sua redirect_url cadastrada no Open Platform
+    redirect  = "https://localhost"
     path      = "/api/v2/shop/auth_partner"
-    sign      = _sign_no_auth(path, timestamp, int(pid), pkey)
+    sign      = _sign_no_auth(path, timestamp, _safe_int(pid), pkey)
     return (
         f"{BASE_URL}{path}"
         f"?partner_id={pid}"
@@ -133,15 +144,14 @@ def get_auth_url():
 
 
 def exchange_code_for_token(code, shop_id=None):
-    """Troca o code OAuth pelo access_token + refresh_token."""
     pid, pkey, sid, _, _ = _get_creds()
     sid       = shop_id or sid
     path      = "/api/v2/auth/token/get"
     timestamp = int(time.time())
-    sign      = _sign_no_auth(path, timestamp, int(pid), pkey)
+    sign      = _sign_no_auth(path, timestamp, _safe_int(pid), pkey)
 
-    params = {"partner_id": int(pid), "timestamp": timestamp, "sign": sign}
-    body   = {"code": code, "shop_id": int(sid), "partner_id": int(pid)}
+    params = {"partner_id": _safe_int(pid), "timestamp": timestamp, "sign": sign}
+    body   = {"code": code, "shop_id": _safe_int(sid), "partner_id": _safe_int(pid)}
 
     try:
         resp = requests.post(BASE_URL + path, params=params, json=body, timeout=30)
@@ -162,17 +172,16 @@ def exchange_code_for_token(code, shop_id=None):
 
 
 def refresh_access_token():
-    """Renova o access_token usando o refresh_token."""
     pid, pkey, sid, _, rt = _get_creds()
     if not rt:
         return {"error": "Refresh Token não encontrado na sessão."}
 
     path      = "/api/v2/auth/access_token/get"
     timestamp = int(time.time())
-    sign      = _sign_no_auth(path, timestamp, int(pid), pkey)
+    sign      = _sign_no_auth(path, timestamp, _safe_int(pid), pkey)
 
-    params = {"partner_id": int(pid), "timestamp": timestamp, "sign": sign}
-    body   = {"refresh_token": rt, "shop_id": int(sid), "partner_id": int(pid)}
+    params = {"partner_id": _safe_int(pid), "timestamp": timestamp, "sign": sign}
+    body   = {"refresh_token": rt, "shop_id": _safe_int(sid), "partner_id": _safe_int(pid)}
 
     try:
         resp = requests.post(BASE_URL + path, params=params, json=body, timeout=30)
@@ -211,14 +220,12 @@ def get_item_base_info(item_ids):
 
 
 def get_item_extra_info(item_ids):
-    """Retorna: sale, views, likes, rating_star, comment_count por item."""
     return _call("GET", "/api/v2/product/get_item_extra_info", {
         "item_id_list": ",".join(str(i) for i in item_ids),
     })
 
 
 def get_all_item_ids(status="NORMAL"):
-    """Pagina automaticamente e retorna todos os item_ids da loja."""
     all_ids = []
     offset  = 0
     while True:
@@ -234,7 +241,6 @@ def get_all_item_ids(status="NORMAL"):
 
 
 def get_items_with_details(item_ids):
-    """Busca base_info + extra_info e mescla em um único dict por produto."""
     all_items = []
     for i in range(0, len(item_ids), 50):
         batch      = item_ids[i:i + 50]
@@ -253,7 +259,6 @@ def get_items_with_details(item_ids):
 
 
 def find_by_sku_exact(sku, status="NORMAL"):
-    """Retorna lista de item_ids cujo item_sku bate exatamente com sku."""
     sku_alvo = sku.strip().lower()
     all_ids  = get_all_item_ids(status=status)
     matched  = []
@@ -268,21 +273,16 @@ def find_by_sku_exact(sku, status="NORMAL"):
 # ── Preços ────────────────────────────────────────────────────────────────────
 
 def update_price(item_id, model_id=0, price=None):
-    """
-    Atualiza preço de um item (ou variação).
-    model_id=0 para produtos sem variação.
-    """
     return _call(
         "POST",
         "/api/v2/product/update_price",
         body={
-            "item_id":    int(item_id),
-            "price_list": [{"model_id": int(model_id), "original_price": float(price)}],
+            "item_id":    _safe_int(item_id),
+            "price_list": [{"model_id": _safe_int(model_id) or 0, "original_price": float(price)}],
         },
     )
 
 
-# Alias para compatibilidade com código legado
 def update_item_price(item_id, price):
     return update_price(item_id, model_id=0, price=price)
 
@@ -290,16 +290,12 @@ def update_item_price(item_id, price):
 # ── Estoque ───────────────────────────────────────────────────────────────────
 
 def update_stock(item_id, model_id=0, stock=0):
-    """
-    Atualiza estoque de um item (ou variação).
-    model_id=0 para produtos sem variação.
-    """
     return _call(
         "POST",
         "/api/v2/product/update_stock",
         body={
-            "item_id":    int(item_id),
-            "stock_list": [{"model_id": int(model_id), "normal_stock": int(stock)}],
+            "item_id":    _safe_int(item_id),
+            "stock_list": [{"model_id": _safe_int(model_id) or 0, "normal_stock": int(stock)}],
         },
     )
 
@@ -307,10 +303,6 @@ def update_stock(item_id, model_id=0, stock=0):
 # ── Pedidos ───────────────────────────────────────────────────────────────────
 
 def get_order_list(time_from, time_to, page_size=50, cursor="", status="READY_TO_SHIP"):
-    """
-    Lista pedidos filtrando por período e status.
-    status: READY_TO_SHIP | PROCESSED | SHIPPED | COMPLETED | CANCELLED | IN_CANCEL
-    """
     return _call("GET", "/api/v2/order/get_order_list", {
         "time_range_field": "create_time",
         "time_from":        int(time_from),
@@ -322,7 +314,6 @@ def get_order_list(time_from, time_to, page_size=50, cursor="", status="READY_TO
 
 
 def get_order_detail(order_sn_list):
-    """Retorna detalhes completos de uma lista de pedidos (máx 50 por chamada)."""
     return _call("GET", "/api/v2/order/get_order_detail", {
         "order_sn_list":            ",".join(order_sn_list),
         "response_optional_fields": "item_list,package_list,buyer_info",
@@ -330,9 +321,6 @@ def get_order_detail(order_sn_list):
 
 
 def get_all_orders(time_from, time_to, status="READY_TO_SHIP"):
-    """
-    Pagina automaticamente e retorna todos os order_sn do período.
-    """
     all_sns = []
     cursor  = ""
     while True:
@@ -351,10 +339,6 @@ def get_all_orders(time_from, time_to, status="READY_TO_SHIP"):
 # ── Ads ───────────────────────────────────────────────────────────────────────
 
 def get_ads_campaigns():
-    """
-    Lista campanhas de anúncios da loja.
-    Requer permissão 'ads' habilitada no app do Open Platform.
-    """
     return _call("GET", "/api/v2/ads/get_all_campaigns", {
         "page_size":   100,
         "page_number": 1,
@@ -362,30 +346,19 @@ def get_ads_campaigns():
 
 
 def toggle_campaign(campaign_id, action):
-    """
-    Ativa ou pausa uma campanha.
-    action: 'RESUME' | 'PAUSE'
-    """
     return _call(
         "POST",
         "/api/v2/ads/update_campaign_status",
         body={
-            "campaign_id":     int(campaign_id),
+            "campaign_id":     _safe_int(campaign_id),
             "campaign_status": action,
         },
     )
 
 
-# ── Dashboard — métricas rápidas ──────────────────────────────────────────────
+# ── Dashboard ─────────────────────────────────────────────────────────────────
 
 def get_dashboard_metrics():
-    """
-    Agrega métricas básicas para o dashboard:
-      - total de produtos ativos
-      - pedidos prontos para envio (últimos 15 dias)
-      - produtos com estoque zerado (amostra até 200)
-    Retorna dict com as métricas ou chave 'error'.
-    """
     metrics = {
         "produtos_ativos":   0,
         "pedidos_pendentes": 0,
@@ -393,20 +366,17 @@ def get_dashboard_metrics():
         "error":             None,
     }
 
-    # Produtos ativos
     result = get_item_list(offset=0, page_size=1, status="NORMAL")
     if result.get("error"):
         metrics["error"] = result["error"]
         return metrics
     metrics["produtos_ativos"] = result.get("response", {}).get("total_count", 0)
 
-    # Pedidos prontos para envio (últimos 15 dias)
     now       = int(time.time())
     time_from = now - 15 * 86400
     all_sns   = get_all_orders(time_from, now, status="READY_TO_SHIP")
     metrics["pedidos_pendentes"] = len(all_sns)
 
-    # Produtos com estoque zerado (amostra de até 200)
     all_ids = get_all_item_ids(status="NORMAL")
     zerado  = 0
     for i in range(0, min(len(all_ids), 200), 50):
