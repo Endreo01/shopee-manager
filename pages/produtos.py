@@ -117,6 +117,9 @@ def render():
         st.rerun()
 
     if btn_buscar:
+        # Limpa resultado anterior para não exibir dado velho durante nova busca
+        st.session_state.pop("produtos_df", None)
+        st.session_state.pop("produtos_aviso", None)
         item_ids = []
 
         # ROTA 1: ID direto
@@ -124,7 +127,7 @@ def render():
             raw = [x.strip() for x in busca.replace(",", " ").split() if x.strip().isdigit()]
             if not raw:
                 st.error("ID invalido. Digite apenas numeros.")
-                return
+                st.stop()
             item_ids = [int(x) for x in raw]
 
         # ROTA 2: SKU exato — percorre TODOS os IDs da loja (ignora checkbox)
@@ -136,8 +139,8 @@ def render():
                 all_ids_temp = _carregar_todos_ids(status, carregar_todos=True)
 
             if not all_ids_temp:
-                st.warning("Nenhum produto encontrado na loja.")
-                return
+                st.session_state["produtos_aviso"] = "Nenhum produto encontrado na loja."
+                st.stop()
 
             matched = []
             prog = st.progress(0, text="Verificando SKUs...")
@@ -153,8 +156,8 @@ def render():
             prog.empty()
 
             if not matched:
-                st.warning(f"SKU '{busca}' nao encontrado. Verifique se esta exatamente igual ao cadastrado na Shopee.")
-                return
+                st.session_state["produtos_aviso"] = f"SKU '{busca}' não encontrado. Verifique se está exatamente igual ao cadastrado na Shopee."
+                st.stop()
             item_ids = matched
 
         # ROTA 3: Lista / Nome
@@ -162,8 +165,8 @@ def render():
             with st.spinner("Carregando lista de produtos..."):
                 all_ids_temp = _carregar_todos_ids(status, carregar_todos)
             if not all_ids_temp:
-                st.info("Nenhum produto encontrado.")
-                return
+                st.session_state["produtos_aviso"] = "Nenhum produto encontrado."
+                st.stop()
             item_ids = all_ids_temp
 
         with st.spinner(f"Buscando detalhes de {len(item_ids)} produto(s)..."):
@@ -179,11 +182,15 @@ def render():
             df = df[df["Nome"].str.contains(busca.strip(), case=False, na=False)]
 
         if df.empty:
-            st.info("Nenhum produto encontrado.")
-            return
+            st.session_state["produtos_aviso"] = "Nenhum produto encontrado."
+            st.stop()
 
         st.session_state["produtos_df"] = df
         st.success(f"✅ {len(df)} produto(s) carregado(s)")
+
+    # Exibe aviso persistente se a última busca não retornou resultado
+    if st.session_state.get("produtos_aviso"):
+        st.warning(st.session_state["produtos_aviso"])
 
     if st.session_state.get("produtos_df") is not None:
         df = st.session_state["produtos_df"]
