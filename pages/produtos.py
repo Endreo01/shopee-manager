@@ -181,22 +181,33 @@ def render():
         termo = st.text_input(
             "Termo",
             placeholder={
-                "Nome":         "Digite parte do nome...",
-                "SKU":          "SKU exato ou parcial (ex: 158)",
-                "ID da Shopee": "Ex: 27590274924  (vírgula para vários)",
+                "Nome":         "Ex: Isosource ; Fórmula  (use ; para múltiplos termos)",
+                "SKU":          "Ex: 15805 ; 15314 ; 158  (use ; para múltiplos SKUs)",
+                "ID da Shopee": "Ex: 27590274924 ; 41864392939  (use ; para múltiplos IDs)",
             }[tipo_filtro],
         )
 
-    # Aplica filtro
+    # Aplica filtro — suporta múltiplos termos separados por ponto e vírgula
     df_filtrado = catalogo.copy()
     if termo.strip():
-        t = termo.strip()
+        termos = [t.strip() for t in termo.split(";") if t.strip()]
+
         if tipo_filtro == "Nome":
-            df_filtrado = df_filtrado[df_filtrado["Nome"].str.contains(t, case=False, na=False)]
+            mascara = pd.Series([False] * len(df_filtrado), index=df_filtrado.index)
+            for t in termos:
+                mascara |= df_filtrado["Nome"].str.contains(t, case=False, na=False)
+            df_filtrado = df_filtrado[mascara]
+
         elif tipo_filtro == "SKU":
-            df_filtrado = df_filtrado[df_filtrado["SKU"].str.contains(t, case=False, na=False)]
+            mascara = pd.Series([False] * len(df_filtrado), index=df_filtrado.index)
+            for t in termos:
+                mascara |= df_filtrado["SKU"].str.contains(t, case=False, na=False)
+            df_filtrado = df_filtrado[mascara]
+
         elif tipo_filtro == "ID da Shopee":
-            ids_busca = [int(x) for x in t.replace(",", " ").split() if x.strip().isdigit()]
+            ids_busca = []
+            for t in termos:
+                ids_busca.extend([int(x) for x in t.replace(",", " ").split() if x.strip().isdigit()])
             df_filtrado = df_filtrado[df_filtrado["ID"].isin(ids_busca)]
 
     # ── Botão atualizar dados dos filtrados ───────────────────────────────────
