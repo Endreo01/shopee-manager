@@ -1,5 +1,6 @@
 import streamlit as st
 import shopee_client as sc
+import supabase_client as sdb
 import pandas as pd
 
 
@@ -22,8 +23,8 @@ def _build_rows(detail_items, extra_map=None):
         extra_map = {}
     rows = []
     for item in detail_items:
-        iid  = item.get("item_id")
-        e    = extra_map.get(iid, {})
+        iid   = item.get("item_id")
+        e     = extra_map.get(iid, {})
         ss, sh = _get_stock(item)
         sold  = e.get("sale", 0) or 0
         views = e.get("views", 0) or 0
@@ -45,12 +46,8 @@ def _build_rows(detail_items, extra_map=None):
     return rows
 
 
-def _carregar_catalogo(status):
-    """
-    Carrega TODOS os produtos da loja com base_info + extra_info.
-    Salva na session_state['catalogo_df'] e session_state['catalogo_status'].
-    """
-    # Passo 1 — buscar todos os IDs
+def _sincronizar_api(status):
+    """Busca TUDO da API Shopee e salva no Supabase."""
     all_ids = []
     offset  = 0
     p = st.progress(0, text="Carregando lista da loja...")
@@ -66,10 +63,8 @@ def _carregar_catalogo(status):
         all_ids.extend(i["item_id"] for i in items)
         total    = result.get("response", {}).get("total_count", len(all_ids))
         has_next = result.get("response", {}).get("has_next_page", False)
-        p.progress(
-            min(len(all_ids) / max(total, 1), 1.0),
-            text=f"Lista: {len(all_ids)} de {total} produtos...",
-        )
+        p.progress(min(len(all_ids) / max(total, 1), 1.0),
+                   text=f"Lista: {len(all_ids)} de {total} produtos...")
         if not has_next:
             break
         offset += 100
@@ -79,9 +74,8 @@ def _carregar_catalogo(status):
         st.warning("Nenhum produto encontrado.")
         return None
 
-    # Passo 2 — base_info em lotes de 50
     detail_items = []
-    p2 = st.progress(0, text="Carregando detalhes dos produtos...")
+    p2 = st.progress(0, text="Carregando detalhes...")
     for i in range(0, len(all_ids), 50):
         res = sc.get_item_base_info(all_ids[i:i+50])
         detail_items.extend(res.get("response", {}).get("item_list", []))
@@ -89,9 +83,8 @@ def _carregar_catalogo(status):
                     text=f"Detalhes: {min(i+50, len(all_ids))} de {len(all_ids)}...")
     p2.empty()
 
-    # Passo 3 — extra_info (vendas, views, curtidas) em lotes de 50
     extra_map = {}
-    p3 = st.progress(0, text="Carregando performance (vendas, views)...")
+    p3 = st.progress(0, text="Carregando vendas e views...")
     for i in range(0, len(all_ids), 50):
         res = sc.get_item_extra_info(all_ids[i:i+50])
         for ei in res.get("response", {}).get("item_list", []):
@@ -101,16 +94,17 @@ def _carregar_catalogo(status):
 
     rows = _build_rows(detail_items, extra_map)
     df   = pd.DataFrame(rows)
+
+    with st.spinner("Salvando no banco de dados..."):
+        sdb.salvar_produtos(df)
+
     st.session_state["catalogo_df"]     = df
     st.session_state["catalogo_status"] = status
     return df
 
 
 def _atualizar_selecionados(item_ids):
-    """
-    Busca dados frescos (base_info + extra_info) para uma lista de IDs
-    e atualiza as linhas correspondentes no catalogo_df.
-    """
+    """Busca dados frescos para IDs específicos e atualiza o banco."""
     detail_items = []
     for i in range(0, len(item_ids), 50):
         res = sc.get_item_base_info(item_ids[i:i+50])
@@ -125,12 +119,39 @@ def _atualizar_selecionados(item_ids):
     rows    = _build_rows(detail_items, extra_map)
     df_novo = pd.DataFrame(rows)
 
-    # Atualiza o catálogo principal linha a linha
-    catalogo = st.session_state["catalogo_df"]
-    catalogo = catalogo[~catalogo["ID"].isin(item_ids)]
-    catalogo = pd.concat([catalogo, df_novo], ignore_index=True)
-    st.session_state["catalogo_df"] = catalogo
+    # Atualiza banco
+    sdb.salvar_produtos(df_novo)
+
+    # Atualiza session_state
+    if st.session_state.get("catalogo_df") is not None:
+        catalogo = st.session_state["catalogo_df"]
+        catalogo = catalogo[~catalogo["ID"].isin(item_ids)]
+        catalogo = pd.concat([catalogo, df_novo], ignore_index=True)
+        st.session_state["catalogo_df"] = catalogo
+
     return df_novo
+
+
+def _aplicar_filtros(df, tipo_filtro, termo):
+    if not termo.strip():
+        return df
+    termos = [t.strip() for t in termo.split(";") if t.strip()]
+    if tipo_filtro == "Nome":
+        mask = pd.Series([False] * len(df), index=df.index)
+        for t in termos:
+            mask |= df["Nome"].str.contains(t, case=False, na=False)
+        return df[mask]
+    elif tipo_filtro == "SKU":
+        mask = pd.Series([False] * len(df), index=df.index)
+        for t in termos:
+            mask |= df["SKU"].str.contains(t, case=False, na=False)
+        return df[mask]
+    elif tipo_filtro == "ID da Shopee":
+        ids_busca = []
+        for t in termos:
+            ids_busca.extend([int(x) for x in t.replace(",", " ").split() if x.strip().isdigit()])
+        return df[df["ID"].isin(ids_busca)]
+    return df
 
 
 # ── Render ────────────────────────────────────────────────────────────────────
@@ -140,96 +161,90 @@ def render():
     st.markdown('<p class="section-sub">Catálogo completo da sua loja Shopee</p>', unsafe_allow_html=True)
 
     # ── Barra de controles ────────────────────────────────────────────────────
-    col_status, col_btn, col_clear = st.columns([1, 1.5, 1])
+    col_status, col_db, col_api, col_clear = st.columns([1, 1.5, 1.5, 1])
     with col_status:
         status = st.selectbox("Status", ["NORMAL", "BANNED", "DELETED", "UNLIST"])
-    with col_btn:
+    with col_db:
         st.markdown("<br>", unsafe_allow_html=True)
-        btn_carregar = st.button("🔄 Carregar / Atualizar Catálogo", type="primary", use_container_width=True)
+        btn_db = st.button("⚡ Carregar do Banco", use_container_width=True,
+                           help="Rápido — lê dados já salvos no Supabase")
+    with col_api:
+        st.markdown("<br>", unsafe_allow_html=True)
+        btn_api = st.button("🔄 Sincronizar com API", use_container_width=True,
+                            help="Lento — busca tudo da Shopee e atualiza o banco")
     with col_clear:
         st.markdown("<br>", unsafe_allow_html=True)
         btn_limpar = st.button("🗑️ Limpar", use_container_width=True)
 
+    # Última atualização
+    ultima = sdb.ultima_atualizacao_produtos()
+    if ultima:
+        st.caption(f"🕐 Banco atualizado em: {ultima[:19].replace('T', ' ')}")
+
     if btn_limpar:
         st.session_state.pop("catalogo_df", None)
-        st.session_state.pop("catalogo_status", None)
         st.rerun()
 
-    # ── Carrega catálogo ──────────────────────────────────────────────────────
-    if btn_carregar:
-        with st.spinner("Carregando catálogo completo..."):
-            df = _carregar_catalogo(status)
+    # ── Carregar do banco (rápido) ────────────────────────────────────────────
+    if btn_db:
+        with st.spinner("Carregando do banco de dados..."):
+            df = sdb.carregar_produtos_db()
+        if df.empty:
+            st.warning("Banco vazio. Clique em **Sincronizar com API** para popular.")
+            st.stop()
+        df_status = df[df["Status"] == status] if "Status" in df.columns else df
+        st.session_state["catalogo_df"]     = df_status
+        st.session_state["catalogo_status"] = status
+        st.success(f"✅ {len(df_status):,} produto(s) carregado(s) do banco!")
+
+    # ── Sincronizar com API (completo) ────────────────────────────────────────
+    if btn_api:
+        df = _sincronizar_api(status)
         if df is None:
             st.stop()
-        st.success(f"✅ {len(df):,} produto(s) carregado(s) no catálogo!")
+        st.success(f"✅ {len(df):,} produto(s) sincronizados e salvos no banco!")
 
-    # Sem catálogo carregado — para aqui
+    # Sem catálogo — para aqui
     if st.session_state.get("catalogo_df") is None:
-        st.info("👆 Clique em **Carregar / Atualizar Catálogo** para começar.")
+        st.info("👆 Clique em **Carregar do Banco** (rápido) ou **Sincronizar com API** (completo).")
         st.stop()
 
     catalogo = st.session_state["catalogo_df"]
 
-    # ── Filtros locais (instantâneos, sem chamada à API) ──────────────────────
+    # ── Filtros locais ────────────────────────────────────────────────────────
     st.divider()
-    st.markdown("### 🔍 Filtrar no catálogo")
+    st.markdown("### 🔍 Filtrar produtos")
+    st.caption("Separe múltiplos termos com **;** — ex: `15805 ; 15314 ; 15000`")
 
     col_tipo, col_busca = st.columns([1.2, 3])
     with col_tipo:
         tipo_filtro = st.selectbox("Filtrar por", ["Nome", "SKU", "ID da Shopee"])
     with col_busca:
-        termo = st.text_input(
-            "Termo",
-            placeholder={
-                "Nome":         "Ex: Isosource ; Fórmula  (use ; para múltiplos termos)",
-                "SKU":          "Ex: 15805 ; 15314 ; 158  (use ; para múltiplos SKUs)",
-                "ID da Shopee": "Ex: 27590274924 ; 41864392939  (use ; para múltiplos IDs)",
-            }[tipo_filtro],
-        )
+        termo = st.text_input("Termo", placeholder={
+            "Nome":         "Ex: Isosource ; Ensure ; Fresubin",
+            "SKU":          "Ex: 15805 ; 15314 ; 158",
+            "ID da Shopee": "Ex: 27590274924 ; 41864392939",
+        }[tipo_filtro])
 
-    # Aplica filtro — suporta múltiplos termos separados por ponto e vírgula
-    df_filtrado = catalogo.copy()
-    if termo.strip():
-        termos = [t.strip() for t in termo.split(";") if t.strip()]
+    df_filtrado = _aplicar_filtros(catalogo, tipo_filtro, termo)
 
-        if tipo_filtro == "Nome":
-            mascara = pd.Series([False] * len(df_filtrado), index=df_filtrado.index)
-            for t in termos:
-                mascara |= df_filtrado["Nome"].str.contains(t, case=False, na=False)
-            df_filtrado = df_filtrado[mascara]
-
-        elif tipo_filtro == "SKU":
-            mascara = pd.Series([False] * len(df_filtrado), index=df_filtrado.index)
-            for t in termos:
-                mascara |= df_filtrado["SKU"].str.contains(t, case=False, na=False)
-            df_filtrado = df_filtrado[mascara]
-
-        elif tipo_filtro == "ID da Shopee":
-            ids_busca = []
-            for t in termos:
-                ids_busca.extend([int(x) for x in t.replace(",", " ").split() if x.strip().isdigit()])
-            df_filtrado = df_filtrado[df_filtrado["ID"].isin(ids_busca)]
-
-    # ── Botão atualizar dados dos filtrados ───────────────────────────────────
+    # ── Botão atualizar dados filtrados ───────────────────────────────────────
     col_info, col_atualizar = st.columns([3, 1])
     with col_info:
-        st.caption(f"Exibindo **{len(df_filtrado):,}** de {len(catalogo):,} produto(s) no catálogo")
+        st.caption(f"Exibindo **{len(df_filtrado):,}** de {len(catalogo):,} produto(s)")
     with col_atualizar:
         btn_atualizar = st.button(
             "⚡ Atualizar dados",
             use_container_width=True,
-            help="Busca estoque, vendas e preço atualizados para os produtos filtrados",
-            disabled=df_filtrado.empty,
+            help="Busca dados frescos da API apenas para os produtos filtrados",
+            disabled=df_filtrado.empty or len(df_filtrado) > 200,
         )
 
     if btn_atualizar:
-        ids_para_atualizar = df_filtrado["ID"].tolist()
-        if len(ids_para_atualizar) > 200:
-            st.warning(f"⚠️ Muitos produtos selecionados ({len(ids_para_atualizar)}). Refine o filtro para até 200.")
-            st.stop()
-        with st.spinner(f"Atualizando dados de {len(ids_para_atualizar)} produto(s)..."):
-            df_filtrado = _atualizar_selecionados(ids_para_atualizar)
-        st.success(f"✅ Dados atualizados para {len(df_filtrado)} produto(s)!")
+        ids = df_filtrado["ID"].tolist()
+        with st.spinner(f"Atualizando {len(ids)} produto(s) via API..."):
+            df_filtrado = _atualizar_selecionados(ids)
+        st.success(f"✅ {len(df_filtrado)} produto(s) atualizados!")
 
     # ── Métricas ──────────────────────────────────────────────────────────────
     if not df_filtrado.empty:
@@ -248,8 +263,11 @@ def render():
     if df_filtrado.empty:
         st.info("Nenhum produto encontrado com esse filtro.")
     else:
+        colunas = ["ID","Nome","SKU","Status","Est. Vendedor","Est. Full",
+                   "Preco (R$)","Vendas","Views","Conversao (%)","Curtidas","Avaliacao","Comentarios"]
+        colunas_exibir = [c for c in colunas if c in df_filtrado.columns]
         st.dataframe(
-            df_filtrado,
+            df_filtrado[colunas_exibir],
             use_container_width=True,
             hide_index=True,
             column_config={
@@ -264,11 +282,6 @@ def render():
                 "Comentarios":   st.column_config.NumberColumn(),
             },
         )
-
-        csv = df_filtrado.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "📥 Exportar CSV",
-            data=csv,
-            file_name="produtos_shopee.csv",
-            mime="text/csv",
-        )
+        csv = df_filtrado[colunas_exibir].to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Exportar CSV", data=csv,
+                           file_name="produtos_shopee.csv", mime="text/csv")
