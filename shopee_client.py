@@ -321,7 +321,7 @@ def get_order_list(time_from, time_to, page_size=50, cursor="", status="READY_TO
 def get_order_detail(order_sn_list):
     return _call("GET", "/api/v2/order/get_order_detail", {
         "order_sn_list":            ",".join(order_sn_list),
-        "response_optional_fields": "item_list,package_list,buyer_info",
+        "response_optional_fields": "item_list,package_list,buyer_info,payment_info",
     })
 
 
