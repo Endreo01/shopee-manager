@@ -199,11 +199,7 @@ def render():
             - `limite`: limite de unidades por cliente (0 = sem limite)
             """)
 
-            # Template XLSX
-            with open("/tmp/template_desconto.xlsx", "rb") as f:
-                xlsx_bytes = f.read()
-
-            # Gera template na memória se não existir
+            # Template XLSX gerado direto na memória
             try:
                 from openpyxl import Workbook
                 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -231,8 +227,9 @@ def render():
                 buf = _io.BytesIO()
                 wb.save(buf)
                 xlsx_bytes = buf.getvalue()
-            except Exception:
-                pass
+            except Exception as _e:
+                xlsx_bytes = b""
+                st.warning(f"Não foi possível gerar o template: {_e}")
 
             st.download_button("📥 Baixar template XLSX", data=xlsx_bytes,
                                file_name="template_desconto.xlsx",
