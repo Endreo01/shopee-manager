@@ -199,13 +199,51 @@ def render():
             - `limite`: limite de unidades por cliente (0 = sem limite)
             """)
 
-            csv_template = "item_id,preco_promo,limite\n27590274924,29.90,0\n41864392939,15.50,2\n"
-            st.download_button("📥 Baixar template CSV", data=csv_template,
-                               file_name="template_desconto.csv", mime="text/csv")
+            # Template XLSX
+            with open("/tmp/template_desconto.xlsx", "rb") as f:
+                xlsx_bytes = f.read()
 
-            arquivo = st.file_uploader("Upload do CSV", type=["csv"])
+            # Gera template na memória se não existir
+            try:
+                from openpyxl import Workbook
+                from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Desconto"
+                headers = ["item_id", "preco_promo", "limite"]
+                hf = PatternFill("solid", start_color="0F3638")
+                hfont = Font(bold=True, color="FFFFFF", name="Arial")
+                thin  = Side(style="thin", color="CCCCCC")
+                brd   = Border(left=thin, right=thin, top=thin, bottom=thin)
+                for col, h in enumerate(headers, 1):
+                    cell = ws.cell(row=1, column=col, value=h)
+                    cell.font = hfont; cell.fill = hf; cell.border = brd
+                    cell.alignment = Alignment(horizontal="center")
+                for row_idx, row_data in enumerate([[27590274924,29.90,0],[41864392939,15.50,2]], 2):
+                    for col_idx, val in enumerate(row_data, 1):
+                        cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                        cell.border = brd; cell.font = Font(name="Arial", size=10)
+                        if col_idx == 2: cell.number_format = 'R$ #,##0.00'
+                ws.column_dimensions["A"].width = 20
+                ws.column_dimensions["B"].width = 18
+                ws.column_dimensions["C"].width = 20
+                import io as _io
+                buf = _io.BytesIO()
+                wb.save(buf)
+                xlsx_bytes = buf.getvalue()
+            except Exception:
+                pass
+
+            st.download_button("📥 Baixar template XLSX", data=xlsx_bytes,
+                               file_name="template_desconto.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+            arquivo = st.file_uploader("Upload do XLSX ou CSV", type=["xlsx","csv"])
             if arquivo:
-                df_csv = pd.read_csv(arquivo)
+                if arquivo.name.endswith(".xlsx"):
+                    df_csv = pd.read_excel(arquivo, dtype={"item_id": int})
+                else:
+                    df_csv = pd.read_csv(arquivo)
                 st.dataframe(df_csv, use_container_width=True, hide_index=True)
                 st.caption(f"{len(df_csv)} produto(s) no CSV")
 
