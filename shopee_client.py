@@ -409,7 +409,7 @@ def get_discount_list(status="ongoing", page_no=1, page_size=100):
 
 def get_discount_items(discount_id, page_no=1, page_size=100):
     """Retorna os itens de uma promoção específica."""
-    return _call("GET", "/api/v2/discount/get_discount_detail", {
+    return _call("GET", "/api/v2/discount/get_discount_item_list", {
         "discount_id": int(discount_id),
         "page_no":     page_no,
         "page_size":   page_size,
@@ -466,3 +466,16 @@ def end_discount(discount_id):
         "/api/v2/discount/end_discount",
         body={"discount_id": int(discount_id)},
     )
+
+
+def calcular_faturamento_pedido(order):
+    """
+    Calcula o faturamento real de um pedido somando
+    model_discounted_price * model_quantity_purchased de cada item.
+    """
+    total = 0.0
+    for item in order.get("item_list") or []:
+        preco = float(item.get("model_discounted_price") or item.get("model_original_price") or 0)
+        qtd   = int(item.get("model_quantity_purchased") or 1)
+        total += preco * qtd
+    return round(total, 2)

@@ -129,10 +129,16 @@ def salvar_pedidos(orders: list):
     rows = []
     for o in orders:
         addr = o.get("recipient_address") or {}
+        # Calcula faturamento real somando itens (total_amount vem zerado da API)
+        fat_real = 0.0
+        for it in (o.get("item_list") or []):
+            preco = float(it.get("model_discounted_price") or it.get("model_original_price") or 0)
+            qtd   = int(it.get("model_quantity_purchased") or 1)
+            fat_real += preco * qtd
         rows.append({
             "order_sn":        o.get("order_sn"),
             "order_status":    o.get("order_status"),
-            "total_amount":    float(o.get("total_amount") or 0),
+            "total_amount":    round(fat_real, 2),
             "buyer_username":  o.get("buyer_username", ""),
             "buyer_name":      (o.get("buyer_info") or {}).get("name", ""),
             "recipient_address": f"{addr.get('full_address','')} - {addr.get('city','')} / {addr.get('state','')}",
