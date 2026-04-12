@@ -1,5 +1,4 @@
 import streamlit as st
-import time
 
 st.set_page_config(
     page_title="Zanup · Shopee Manager",
@@ -12,89 +11,44 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-
-/* Esconde menu nativo de páginas do Streamlit */
 [data-testid="stSidebarNav"] { display: none !important; }
-
-/* Sidebar */
 [data-testid="stSidebar"] { background: #0f3638; }
 [data-testid="stSidebar"] * { color: #e0f0f1 !important; }
-
-/* Métricas */
 [data-testid="stMetric"] {
-    background: #f9f8f5;
-    border: 1px solid #dcd9d5;
-    border-radius: 12px;
-    padding: 16px !important;
+    background: #f9f8f5; border: 1px solid #dcd9d5;
+    border-radius: 12px; padding: 16px !important;
     box-shadow: 0 1px 4px rgba(15,54,56,0.06);
 }
 [data-testid="stMetricValue"] { color: #0f3638 !important; font-weight: 700; }
-
-/* Botões */
 .stButton > button {
-    background: #01696f;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-weight: 600;
-    transition: background 0.2s;
+    background: #01696f; color: white; border: none;
+    border-radius: 8px; font-weight: 600; transition: background 0.2s;
 }
 .stButton > button:hover { background: #0c4e54; }
-
-/* Títulos de seção */
 .section-title { font-size: 22px; font-weight: 700; color: #0f3638; margin-bottom: 4px; }
 .section-sub   { color: #7a7974; font-size: 14px; margin-bottom: 20px; }
-
-/* Badges */
 .badge-ok  { display:inline-block; background:#d4dfcc; color:#1e3f0a; border-radius:20px; padding:2px 12px; font-size:13px; font-weight:600; }
 .badge-err { display:inline-block; background:#e0ced7; color:#561740; border-radius:20px; padding:2px 12px; font-size:13px; font-weight:600; }
-
-/* ── Inputs e Selects com contraste visível ── */
 div[data-testid="stTextInput"] input,
 div[data-testid="stNumberInput"] input {
-    background-color: #ffffff !important;
-    border: 1.5px solid #b5c8c9 !important;
-    border-radius: 8px !important;
-    color: #0f3638 !important;
-    padding: 8px 12px !important;
-}
-div[data-testid="stTextInput"] input:focus,
-div[data-testid="stNumberInput"] input:focus {
-    border-color: #01696f !important;
-    box-shadow: 0 0 0 2px rgba(1,105,111,0.15) !important;
+    background-color: #ffffff !important; border: 1.5px solid #b5c8c9 !important;
+    border-radius: 8px !important; color: #0f3638 !important; padding: 8px 12px !important;
 }
 div[data-testid="stSelectbox"] > div > div {
-    background-color: #ffffff !important;
-    border: 1.5px solid #b5c8c9 !important;
-    border-radius: 8px !important;
-    color: #0f3638 !important;
-}
-div[data-testid="stSelectbox"] > div > div:focus-within {
-    border-color: #01696f !important;
-    box-shadow: 0 0 0 2px rgba(1,105,111,0.15) !important;
-}
-div[data-testid="stTextInput"] label,
-div[data-testid="stSelectbox"] label,
-div[data-testid="stMultiSelect"] label {
-    color: #0f3638 !important;
-    font-weight: 500 !important;
-    font-size: 14px !important;
-}
-div[data-testid="stTextInput"] input::placeholder {
-    color: #a0adb0 !important;
+    background-color: #ffffff !important; border: 1.5px solid #b5c8c9 !important;
+    border-radius: 8px !important; color: #0f3638 !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ── Carrega Secrets automaticamente ──────────────────────────────────────────
+# ── Carrega Secrets ───────────────────────────────────────────────────────────
 def _load_secrets():
     if st.session_state.get("_secrets_loaded"):
         return
     try:
         shopee = st.secrets.get("shopee", {})
-        keys = ["partner_id", "partner_key", "shop_id", "access_token", "refresh_token"]
-        for k in keys:
+        for k in ["partner_id","partner_key","shop_id","access_token","refresh_token"]:
             if shopee.get(k) and not st.session_state.get(k):
                 st.session_state[k] = shopee[k]
         if st.session_state.get("access_token"):
@@ -105,14 +59,11 @@ def _load_secrets():
 
 _load_secrets()
 
-# ── Estado de sessão ──────────────────────────────────────────────────────────
+# ── Estado inicial ────────────────────────────────────────────────────────────
 for k, v in {
     "authenticated": False,
-    "partner_id": "",
-    "partner_key": "",
-    "shop_id": "",
-    "access_token": "",
-    "refresh_token": "",
+    "partner_id": "", "partner_key": "",
+    "shop_id": "", "access_token": "", "refresh_token": "",
     "page": "🏠 Dashboard",
 }.items():
     if k not in st.session_state:
@@ -128,10 +79,10 @@ with st.sidebar:
         "⚙️ Configurações",
         "📦 Produtos",
         "💰 Atualizar Preços",
+        "🏷️ Descontos",
         "📦 Estoque",
         "📣 Anúncios (Ads)",
         "🛍️ Pedidos",
-        "🔄 Token / Auth",
     ]
     selected = st.radio("Navegação", pages, label_visibility="collapsed")
     st.session_state.page = selected
@@ -145,11 +96,11 @@ with st.sidebar:
 
 # ── Roteamento ────────────────────────────────────────────────────────────────
 page = st.session_state.page
-if   page == "🏠 Dashboard":        from pages.dashboard     import render; render()
-elif page == "⚙️ Configurações":    from pages.configuracoes import render; render()
-elif page == "📦 Produtos":          from pages.produtos      import render; render()
-elif page == "💰 Atualizar Preços":  from pages.precos        import render; render()
-elif page == "📦 Estoque":           from pages.estoque       import render; render()
-elif page == "📣 Anúncios (Ads)":    from pages.ads           import render; render()
-elif page == "🛍️ Pedidos":          from pages.pedidos       import render; render()
-elif page == "🔄 Token / Auth":      from pages.auth_token    import render; render()
+if   page == "🏠 Dashboard":       from pages.dashboard      import render; render()
+elif page == "⚙️ Configurações":   from pages.configuracoes  import render; render()
+elif page == "📦 Produtos":         from pages.produtos       import render; render()
+elif page == "💰 Atualizar Preços": from pages.precos         import render; render()
+elif page == "🏷️ Descontos":       from pages.desconto       import render; render()
+elif page == "📦 Estoque":          from pages.estoque        import render; render()
+elif page == "📣 Anúncios (Ads)":   from pages.ads            import render; render()
+elif page == "🛍️ Pedidos":         from pages.pedidos        import render; render()
