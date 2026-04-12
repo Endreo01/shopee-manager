@@ -479,3 +479,122 @@ def calcular_faturamento_pedido(order):
         qtd   = int(item.get("model_quantity_purchased") or 1)
         total += preco * qtd
     return round(total, 2)
+
+
+# ── Ads / Campanhas ───────────────────────────────────────────────────────────
+
+def get_product_campaign_list(page_no=1, page_size=100):
+    """Lista campanhas de produto ativas."""
+    return _call("GET", "/api/v2/ads/get_product_campaign_list", {
+        "page_no":   page_no,
+        "page_size": page_size,
+    })
+
+
+def get_all_product_campaigns():
+    """Pagina automaticamente e retorna todas as campanhas."""
+    all_campaigns = []
+    page = 1
+    while True:
+        res = get_product_campaign_list(page_no=page, page_size=100)
+        if res.get("error"):
+            return res
+        campaigns = res.get("response", {}).get("campaign_list", [])
+        if not campaigns:
+            break
+        all_campaigns.extend(campaigns)
+        has_more = res.get("response", {}).get("has_next_page", False)
+        if not has_more:
+            break
+        page += 1
+    return {"response": {"campaign_list": all_campaigns}}
+
+
+def get_recommended_item_list(page_no=1, page_size=100):
+    """
+    Retorna produtos elegíveis para criar Ads
+    (estoque > 0, sem campanha ativa).
+    """
+    return _call("GET", "/api/v2/ads/get_recommended_item_list", {
+        "page_no":   page_no,
+        "page_size": page_size,
+    })
+
+
+def get_all_recommended_items():
+    """Pagina automaticamente todos os produtos elegíveis para Ads."""
+    all_items = []
+    page = 1
+    while True:
+        res = get_recommended_item_list(page_no=page, page_size=100)
+        if res.get("error"):
+            return res
+        items = res.get("response", {}).get("item_list", [])
+        if not items:
+            break
+        all_items.extend(items)
+        has_more = res.get("response", {}).get("has_next_page", False)
+        if not has_more:
+            break
+        page += 1
+    return {"response": {"item_list": all_items}}
+
+
+def create_product_campaign(item_id, budget, roas_target, start_date, bidding_method="auto"):
+    """
+    Cria uma campanha de produto com ROAS alvo.
+    start_date: string "DD-MM-YYYY"
+    budget: orçamento diário em R$
+    roas_target: ex: 3.0
+    bidding_method: "auto" (ROAS automático) ou "manual"
+    """
+    return _call(
+        "POST",
+        "/api/v2/ads/create_product_campaign",
+        body={
+            "item_id":        int(item_id),
+            "budget":         float(budget),
+            "start_date":     start_date,
+            "bidding_method": bidding_method,
+            "roas_target":    float(roas_target),
+            "campaign_placement": "all",
+            "product_selection":  "manual",
+        },
+    )
+
+
+def update_campaign_roas(campaign_id, roas_target):
+    """Atualiza o ROAS alvo de uma campanha existente."""
+    return _call(
+        "POST",
+        "/api/v2/ads/update_product_campaign",
+        body={
+            "campaign_id":  int(campaign_id),
+            "roas_target":  float(roas_target),
+            "bidding_method": "auto",
+        },
+    )
+
+
+def update_campaign_budget(campaign_id, budget):
+    """Atualiza o orçamento diário de uma campanha."""
+    return _call(
+        "POST",
+        "/api/v2/ads/update_product_campaign",
+        body={
+            "campaign_id": int(campaign_id),
+            "budget":      float(budget),
+        },
+    )
+
+
+def toggle_campaign_status(campaign_id, action):
+    """Ativa ou pausa uma campanha. action: 'enable' | 'disable'"""
+    return _call(
+        "POST",
+        "/api/v2/ads/update_product_campaign_status",
+        body={
+            "campaign_id": int(campaign_id),
+            "operation":   action,
+        },
+    )
