@@ -131,12 +131,21 @@ def get_shop_info():
 def get_auth_url():
     """
     Gera URL de autorização OAuth da Shopee.
-    NAO usa assinatura — apenas partner_id e redirect.
+    Requer partner_id, timestamp, sign e redirect.
     """
-    pid, _, _, _, _ = _get_creds()
-    redirect = "https://shopee-manager.streamlit.app"
-    path     = "/api/v2/shop/auth_partner"
-    return f"{BASE_URL}{path}?partner_id={pid}&redirect={redirect}"
+    pid, pkey, _, _, _ = _get_creds()
+    redirect  = "https://shopee-manager.streamlit.app"
+    path      = "/api/v2/shop/auth_partner"
+    timestamp = int(time.time())
+    base      = f"{_safe_int(pid)}{path}{timestamp}"
+    sign      = hmac.new(pkey.encode(), base.encode(), hashlib.sha256).hexdigest()
+    return (
+        f"{BASE_URL}{path}"
+        f"?partner_id={pid}"
+        f"&timestamp={timestamp}"
+        f"&sign={sign}"
+        f"&redirect={redirect}"
+    )
 
 
 def exchange_code_for_token(code, shop_id=None):
