@@ -131,7 +131,7 @@ def get_shop_info():
 def get_auth_url():
     pid, pkey, _, _, _ = _get_creds()
     timestamp = int(time.time())
-    redirect  = "https://localhost"
+    redirect  = "https://shopee-manager.streamlit.app"
     path      = "/api/v2/shop/auth_partner"
     sign      = _sign_no_auth(path, timestamp, _safe_int(pid), pkey)
     return (
