@@ -394,3 +394,75 @@ def get_dashboard_metrics():
     metrics["estoque_zerado"] = zerado
 
     return metrics
+
+
+# ── Descontos / Promoções ─────────────────────────────────────────────────────
+
+def get_discount_list(status="ongoing", page_no=1, page_size=100):
+    """Lista promoções de desconto da loja."""
+    return _call("GET", "/api/v2/discount/get_discount_list", {
+        "discount_status": status,
+        "page_no":         page_no,
+        "page_size":       page_size,
+    })
+
+
+def get_discount_items(discount_id, page_no=1, page_size=100):
+    """Retorna os itens de uma promoção específica."""
+    return _call("GET", "/api/v2/discount/get_discount_detail", {
+        "discount_id": int(discount_id),
+        "page_no":     page_no,
+        "page_size":   page_size,
+    })
+
+
+def create_discount(name, start_time, end_time):
+    """
+    Cria uma nova promoção de desconto.
+    start_time e end_time são timestamps unix.
+    """
+    return _call(
+        "POST",
+        "/api/v2/discount/add_discount",
+        body={
+            "discount_name": name,
+            "start_time":    int(start_time),
+            "end_time":      int(end_time),
+        },
+    )
+
+
+def add_discount_items(discount_id, item_list):
+    """
+    Adiciona produtos a uma promoção existente.
+    item_list: lista de dicts com item_id, item_promotion_price, purchase_limit, model_list
+    """
+    return _call(
+        "POST",
+        "/api/v2/discount/add_discount_item",
+        body={
+            "discount_id": int(discount_id),
+            "item_list":   item_list,
+        },
+    )
+
+
+def delete_discount_item(discount_id, item_id):
+    """Remove um produto de uma promoção."""
+    return _call(
+        "POST",
+        "/api/v2/discount/delete_discount_item",
+        body={
+            "discount_id": int(discount_id),
+            "item_id":     int(item_id),
+        },
+    )
+
+
+def end_discount(discount_id):
+    """Encerra uma promoção antes do prazo."""
+    return _call(
+        "POST",
+        "/api/v2/discount/end_discount",
+        body={"discount_id": int(discount_id)},
+    )

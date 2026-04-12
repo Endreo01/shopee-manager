@@ -3,16 +3,12 @@ import shopee_client as sc
 import supabase_client as sdb
 import pandas as pd
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 BR = ZoneInfo("America/Sao_Paulo")
 
-STATUS_OPCOES = [
-    "READY_TO_SHIP", "PROCESSED", "SHIPPED",
-    "COMPLETED", "CANCELLED", "IN_CANCEL",
-]
-
+STATUS_TODOS = ["READY_TO_SHIP","PROCESSED","SHIPPED","COMPLETED","CANCELLED","IN_CANCEL"]
 
 def _ts(ts):
     if not ts:
@@ -22,27 +18,16 @@ def _ts(ts):
     except Exception:
         return ""
 
-
 def _parse_valor(v):
-    """
-    Shopee retorna total_amount às vezes em centavos (int) às vezes como float real.
-    Heurística: pedido > R$500 e valor > 50000 → centavos.
-    """
     try:
         v = float(v)
-        if v > 50000:
-            return round(v / 100, 2)
-        return v
+        return round(v / 100, 2) if v > 50000 else v
     except Exception:
         return 0.0
 
-
 def _hoje_inicio_br():
-    """Retorna timestamp unix do início de hoje no fuso de Brasília."""
     agora = datetime.now(BR)
-    inicio = agora.replace(hour=0, minute=0, second=0, microsecond=0)
-    return int(inicio.timestamp())
-
+    return int(agora.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
 
 def _build_df(orders):
     rows = []
@@ -50,11 +35,10 @@ def _build_df(orders):
         addr  = o.get("recipient_address") or {}
         pkgs  = o.get("package_list") or [{}]
         itens = o.get("item_list") or []
-        valor = _parse_valor(o.get("total_amount", 0))
         rows.append({
             "Order SN":      o.get("order_sn", ""),
             "Status":        o.get("order_status", ""),
-            "Total (R$)":    valor,
+            "Total (R$)":    _parse_valor(o.get("total_amount", 0)),
             "Comprador":     o.get("buyer_username", ""),
             "Destinatário":  addr.get("name", ""),
             "Cidade":        addr.get("city", ""),
@@ -70,29 +54,24 @@ def _build_df(orders):
         })
     return pd.DataFrame(rows)
 
-
-def _sincronizar_status(status_list, time_from, time_to):
-    all_orders = []
-    all_sns    = []
-    for status in status_list:
-        with st.spinner(f"Buscando {status}..."):
-            sns = sc.get_all_orders(time_from, time_to, status=status)
+def _sincronizar_todos(time_from, time_to):
+    """Busca TODOS os status de uma vez e retorna lista completa de pedidos."""
+    all_sns = []
+    for status in STATUS_TODOS:
+        sns = sc.get_all_orders(time_from, time_to, status=status)
         all_sns.extend(sns)
-
-    # Deduplica
-    all_sns = list(dict.fromkeys(all_sns))
+    all_sns = list(dict.fromkeys(all_sns))  # deduplica
     if not all_sns:
         return [], []
 
+    all_orders = []
     prog = st.progress(0, text=f"Carregando detalhes de {len(all_sns)} pedidos...")
     for i in range(0, len(all_sns), 50):
         batch  = all_sns[i:i+50]
         detail = sc.get_order_detail(batch)
         all_orders.extend(detail.get("response", {}).get("order_list", []))
-        prog.progress(
-            min((i+50) / len(all_sns), 1.0),
-            text=f"Detalhes: {min(i+50, len(all_sns))} de {len(all_sns)}..."
-        )
+        prog.progress(min((i+50)/len(all_sns), 1.0),
+                      text=f"Detalhes: {min(i+50,len(all_sns))} de {len(all_sns)}...")
     prog.empty()
     return all_sns, all_orders
 
@@ -102,32 +81,15 @@ def render():
     st.markdown('<p class="section-sub">Consulte e gerencie os pedidos da sua loja</p>', unsafe_allow_html=True)
 
     # ── Controles ─────────────────────────────────────────────────────────────
-    col1, col2 = st.columns([1, 2])
+    col1, col2, col3 = st.columns([1.2, 1.5, 1.5])
     with col1:
-        opcoes_periodo = {
-            "Hoje":         0,
-            "Últimos 7d":   7,
-            "Últimos 15d":  15,
-            "Últimos 30d":  30,
-            "Últimos 60d":  60,
-        }
+        opcoes_periodo = {"Hoje": 0, "Últimos 7d": 7, "Últimos 15d": 15, "Últimos 30d": 30, "Últimos 60d": 60}
         periodo_sel = st.selectbox("Período", list(opcoes_periodo.keys()))
         dias        = opcoes_periodo[periodo_sel]
-
     with col2:
-        status_sel = st.multiselect(
-            "Status",
-            STATUS_OPCOES,
-            default=["READY_TO_SHIP"],
-        )
-
-    busca_sn = st.text_input("🔍 Buscar Order SN", placeholder="Ex: 2504XXX ; 2504YYY")
-
-    col_db, col_api, _ = st.columns([1.5, 1.5, 3])
-    with col_db:
-        btn_db = st.button("⚡ Carregar do Banco", use_container_width=True)
-    with col_api:
-        btn_api = st.button("🔄 Sincronizar com API", use_container_width=True)
+        btn_db = st.button("⚡ Carregar do Banco", use_container_width=True, help="Lê dados já salvos")
+    with col3:
+        btn_api = st.button("🔄 Sincronizar com API", use_container_width=True, help="Busca tudo da Shopee e salva")
 
     ultima = sdb.ultima_atualizacao_pedidos()
     if ultima:
@@ -135,30 +97,18 @@ def render():
             dt = datetime.fromisoformat(ultima.replace("Z", "+00:00")).astimezone(BR)
             st.caption(f"🕐 Banco atualizado em: {dt.strftime('%d/%m/%Y %H:%M')} (Brasília)")
         except Exception:
-            st.caption(f"🕐 {ultima[:19]}")
+            pass
 
-    if not status_sel:
-        st.warning("Selecione ao menos um status.")
-        st.stop()
-
-    # Calcula time_from correto
-    now = int(time.time())
-    if dias == 0:  # Hoje = desde meia-noite de Brasília
-        time_from = _hoje_inicio_br()
-    else:
-        time_from = now - dias * 86400
+    now       = int(time.time())
+    time_from = _hoje_inicio_br() if dias == 0 else now - dias * 86400
 
     # ── Carregar do banco ─────────────────────────────────────────────────────
     if btn_db:
-        with st.spinner("Carregando pedidos do banco..."):
+        with st.spinner("Carregando do banco..."):
             df_raw = sdb.carregar_pedidos_db(time_from=time_from)
-
         if df_raw.empty:
-            st.warning("Banco vazio para esse filtro. Use **Sincronizar com API**.")
+            st.warning("Banco vazio. Use **Sincronizar com API**.")
             st.stop()
-
-        # Filtra status selecionados localmente
-        df_raw = df_raw[df_raw["order_status"].isin(status_sel)]
         orders = [r for r in df_raw["raw"].tolist() if r]
         df     = _build_df(orders)
         st.session_state["pedidos_df"]  = df
@@ -167,19 +117,17 @@ def render():
 
     # ── Sincronizar com API ───────────────────────────────────────────────────
     if btn_api:
-        sns, all_orders = _sincronizar_status(status_sel, time_from, now)
-
+        with st.spinner("Buscando todos os status na API Shopee..."):
+            sns, all_orders = _sincronizar_todos(time_from, now)
         if not all_orders:
-            st.info("Nenhum pedido encontrado.")
+            st.info("Nenhum pedido encontrado para o período.")
             st.stop()
-
         with st.spinner("Salvando no banco..."):
             sdb.salvar_pedidos(all_orders)
-
         df = _build_df(all_orders)
         st.session_state["pedidos_df"]  = df
         st.session_state["pedidos_raw"] = all_orders
-        st.success(f"✅ {len(df):,} pedido(s) encontrados e salvos!")
+        st.success(f"✅ {len(df):,} pedido(s) sincronizados!")
 
     if st.session_state.get("pedidos_df") is None:
         st.info("👆 Clique em **Carregar do Banco** ou **Sincronizar com API**.")
@@ -188,45 +136,57 @@ def render():
     df     = st.session_state["pedidos_df"]
     orders = st.session_state.get("pedidos_raw", [])
 
-    # ── Filtro local por Order SN ─────────────────────────────────────────────
+    # ── Filtros locais ────────────────────────────────────────────────────────
+    st.divider()
+    col_f1, col_f2, col_f3 = st.columns([1.5, 1.5, 2])
+    with col_f1:
+        status_filtro = st.multiselect("Filtrar por Status", ["TODOS"] + STATUS_TODOS, default=["TODOS"])
+    with col_f2:
+        busca_sn = st.text_input("Buscar Order SN", placeholder="Ex: 2504XXX ; 2504YYY")
+    with col_f3:
+        busca_comprador = st.text_input("Buscar Comprador", placeholder="Nome ou username")
+
+    df_fil = df.copy()
+
+    # Filtro status
+    if status_filtro and "TODOS" not in status_filtro:
+        df_fil = df_fil[df_fil["Status"].isin(status_filtro)]
+
+    # Filtro SN
     if busca_sn.strip():
         termos = [t.strip() for t in busca_sn.split(";") if t.strip()]
-        mask   = pd.Series([False] * len(df), index=df.index)
+        mask   = pd.Series([False]*len(df_fil), index=df_fil.index)
         for t in termos:
-            mask |= df["Order SN"].str.contains(t, case=False, na=False)
-        df = df[mask]
+            mask |= df_fil["Order SN"].str.contains(t, case=False, na=False)
+        df_fil = df_fil[mask]
+
+    # Filtro comprador
+    if busca_comprador.strip():
+        df_fil = df_fil[df_fil["Comprador"].str.contains(busca_comprador.strip(), case=False, na=False)]
 
     # ── Métricas ──────────────────────────────────────────────────────────────
-    total_fat = df["Total (R$)"].sum()
-    ticket    = df["Total (R$)"].mean() if len(df) > 0 else 0
+    total_fat = df_fil["Total (R$)"].sum()
+    ticket    = df_fil["Total (R$)"].mean() if len(df_fil) > 0 else 0
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Pedidos", f"{len(df):,}")
+    c1.metric("Total Pedidos", f"{len(df_fil):,}")
     c2.metric("Faturamento",   f"R$ {total_fat:,.2f}")
     c3.metric("Ticket Médio",  f"R$ {ticket:,.2f}")
-    c4.metric("Itens Totais",  f"{df['Qtd Itens'].sum():,}")
+    c4.metric("Itens Totais",  f"{df_fil['Qtd Itens'].sum():,}")
 
     st.divider()
 
-    # ── Tabela ────────────────────────────────────────────────────────────────
-    if df.empty:
-        st.info("Nenhum pedido encontrado.")
+    if df_fil.empty:
+        st.info("Nenhum pedido encontrado com esse filtro.")
     else:
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Total (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
-                "Qtd Itens":  st.column_config.NumberColumn(),
-            },
-        )
-        csv = df.to_csv(index=False).encode("utf-8")
+        st.dataframe(df_fil, use_container_width=True, hide_index=True,
+                     column_config={"Total (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+                                    "Qtd Itens":  st.column_config.NumberColumn()})
+        csv = df_fil.to_csv(index=False).encode("utf-8")
         st.download_button("📥 Exportar CSV", data=csv,
                            file_name="pedidos_shopee.csv", mime="text/csv")
 
-    # ── JSON ──────────────────────────────────────────────────────────────────
     if orders:
         with st.expander("📄 Ver JSON completo"):
-            sns_filtrados = set(df["Order SN"].tolist())
-            st.json([o for o in orders if o.get("order_sn") in sns_filtrados])
+            sns_fil = set(df_fil["Order SN"].tolist())
+            st.json([o for o in orders if o.get("order_sn") in sns_fil])
