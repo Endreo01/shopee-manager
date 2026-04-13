@@ -6,6 +6,13 @@ from datetime import datetime
 BR = ZoneInfo("America/Sao_Paulo")
 
 
+
+def _secret_ads(key):
+    try:
+        return st.secrets["shopee_ads"][key]
+    except Exception:
+        return None
+
 def _secao_credenciais():
     st.markdown("### 🔑 Credenciais da API Shopee")
 
@@ -177,6 +184,43 @@ refresh_token = "refresh_gerado_aqui"
 [supabase]
 anon_key = "sb_publishable_k6EdTrPP-YRrf74h3rqJ4Q_q6LgQacS"
 """, language="toml")
+
+
+
+def _secao_ads_creds():
+    st.markdown("---")
+    st.markdown("### 📣 Credenciais do App de Ads")
+    st.info("O app de Ads usa um Partner ID e Partner Key separados, mas o mesmo Shop ID e Access Token.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        ads_partner_id = st.text_input(
+            "Ads Partner ID *",
+            value=st.session_state.get("ads_partner_id", "") or _secret_ads("partner_id") or "",
+            placeholder="Ex: 2032349"
+        )
+    with col2:
+        ads_partner_key = st.text_input(
+            "Ads Partner Key *",
+            value=st.session_state.get("ads_partner_key", "") or _secret_ads("partner_key") or "",
+            type="password",
+            placeholder="shpk..."
+        )
+
+    if st.button("💾 Salvar Credenciais de Ads", use_container_width=False):
+        if not ads_partner_id or not ads_partner_key:
+            st.error("Preencha o Ads Partner ID e Ads Partner Key.")
+        else:
+            st.session_state["ads_partner_id"]  = ads_partner_id.strip()
+            st.session_state["ads_partner_key"] = ads_partner_key.strip()
+            st.success("✅ Credenciais de Ads salvas!")
+
+    st.markdown("#### 📝 Secrets do Streamlit — bloco Ads")
+    st.code("""[shopee_ads]
+partner_id  = "2032349"
+partner_key = "shpk6b746761466d436f414b7353414556534c697771754d64705a4777465846"
+""", language="toml")
+    st.caption("Adicione este bloco nos Secrets do Streamlit Cloud para persistir as credenciais de Ads.")
 
 
 def render():

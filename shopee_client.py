@@ -111,6 +111,76 @@ def _call(method, path, extra_params=None, body=None, require_auth=True):
         return {"error": str(e)}
 
 
+def _get_ads_creds():
+    """
+    Lê credenciais do app de Ads (partner_id e partner_key separados).
+    shop_id e access_token são os mesmos do app principal.
+    """
+    try:
+        ads = st.secrets["shopee_ads"]
+        pid  = str(ads["partner_id"]).strip()
+        pkey = str(ads["partner_key"]).strip()
+    except Exception:
+        # Fallback para session_state se configurado manualmente
+        pid  = str(st.session_state.get("ads_partner_id", "")).strip()
+        pkey = str(st.session_state.get("ads_partner_key", "")).strip()
+
+    # shop_id e access_token são os mesmos do app principal
+    _, _, sid, at, _ = _get_creds()
+    return pid, pkey, sid, at
+
+
+def _call_ads(method, path, extra_params=None, body=None):
+    """
+    Chamada para endpoints de Ads usando as credenciais do app de Ads.
+    """
+    pid, pkey, sid, at = _get_ads_creds()
+
+    if not pid or not pkey:
+        return {"error": "Credenciais do app de Ads não configuradas. Adicione [shopee_ads] nos Secrets."}
+    if not sid or not at:
+        return {"error": "Shop ID / Access Token não configurados. Acesse ⚙️ Configurações."}
+
+    pid_int = _safe_int(pid)
+    sid_int = _safe_int(sid)
+
+    if pid_int is None:
+        return {"error": f"Ads Partner ID inválido: '{pid}'"}
+    if sid_int is None:
+        return {"error": f"Shop ID inválido: '{sid}'"}
+
+    timestamp = int(time.time())
+    sign      = _sign(path, timestamp, at, sid_int, pid_int, pkey)
+
+    params = {
+        "partner_id":   pid_int,
+        "timestamp":    timestamp,
+        "access_token": at,
+        "shop_id":      sid_int,
+        "sign":         sign,
+    }
+    if extra_params:
+        params.update(extra_params)
+
+    url = BASE_URL + path
+    try:
+        if method == "GET":
+            resp = requests.get(url, params=params, timeout=30)
+        else:
+            payload = body if body is not None else (extra_params or {})
+            resp = requests.post(url, params=params, json=payload, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.HTTPError as e:
+        try:
+            details = e.response.json()
+        except Exception:
+            details = {}
+        return {"error": str(e), "details": details}
+    except requests.exceptions.RequestException as e:
+        return {"error": str(e)}
+
+
 # ── Shop ──────────────────────────────────────────────────────────────────────
 
 def get_shop_info():
@@ -344,14 +414,14 @@ def get_all_orders(time_from, time_to, status="READY_TO_SHIP"):
 # ── Ads ───────────────────────────────────────────────────────────────────────
 
 def get_ads_campaigns():
-    return _call("GET", "/api/v2/ads/get_all_campaigns", {
+    return _call_ads("GET", "/api/v2/ads/get_all_campaigns", {
         "page_size":   100,
         "page_number": 1,
     })
 
 
 def toggle_campaign(campaign_id, action):
-    return _call(
+    return _call_ads(
         "POST",
         "/api/v2/ads/update_campaign_status",
         body={
@@ -485,7 +555,7 @@ def calcular_faturamento_pedido(order):
 
 def get_product_campaign_list(page_no=1, page_size=100):
     """Lista campanhas de produto ativas."""
-    return _call("GET", "/api/v2/ads/get_product_campaign_list", {
+    return _call_ads("GET", "/api/v2/ads/get_product_campaign_list", {
         "page_no":   page_no,
         "page_size": page_size,
     })
@@ -515,7 +585,7 @@ def get_recommended_item_list(page_no=1, page_size=100):
     Retorna produtos elegíveis para criar Ads
     (estoque > 0, sem campanha ativa).
     """
-    return _call("GET", "/api/v2/ads/get_recommended_item_list", {
+    return _call_ads("GET", "/api/v2/ads/get_recommended_item_list", {
         "page_no":   page_no,
         "page_size": page_size,
     })
@@ -548,7 +618,7 @@ def create_product_campaign(item_id, budget, roas_target, start_date, bidding_me
     roas_target: ex: 3.0
     bidding_method: "auto" (ROAS automático) ou "manual"
     """
-    return _call(
+    return _call_ads(
         "POST",
         "/api/v2/ads/create_product_campaign",
         body={
@@ -565,7 +635,7 @@ def create_product_campaign(item_id, budget, roas_target, start_date, bidding_me
 
 def update_campaign_roas(campaign_id, roas_target):
     """Atualiza o ROAS alvo de uma campanha existente."""
-    return _call(
+    return _call_ads(
         "POST",
         "/api/v2/ads/update_product_campaign",
         body={
@@ -578,7 +648,7 @@ def update_campaign_roas(campaign_id, roas_target):
 
 def update_campaign_budget(campaign_id, budget):
     """Atualiza o orçamento diário de uma campanha."""
-    return _call(
+    return _call_ads(
         "POST",
         "/api/v2/ads/update_product_campaign",
         body={
@@ -590,7 +660,7 @@ def update_campaign_budget(campaign_id, budget):
 
 def toggle_campaign_status(campaign_id, action):
     """Ativa ou pausa uma campanha. action: 'enable' | 'disable'"""
-    return _call(
+    return _call_ads(
         "POST",
         "/api/v2/ads/update_product_campaign_status",
         body={
