@@ -551,6 +551,236 @@ def calcular_faturamento_pedido(order):
     return round(total, 2)
 
 
+# ── Ads ──────────────────────────────────────────────────────────────────────
+
+def get_total_balance():
+    """Saldo total de créditos de anúncios da loja."""
+    return _call_ads("GET", "/api/v2/ads/get_total_balance")
+
+
+def get_recommended_item_list(page_no=1, page_size=100):
+    """
+    Retorna SKUs recomendados para anunciar (Hot Search, Best Seller, Best ROI).
+    Produtos com estoque disponível e sem campanha ativa.
+    """
+    return _call_ads("GET", "/api/v2/ads/get_recommended_item_list", {
+        "page_no":   page_no,
+        "page_size": page_size,
+    })
+
+
+def get_all_recommended_items():
+    """Pagina automaticamente todos os produtos recomendados para Ads."""
+    all_items = []
+    page = 1
+    while True:
+        res = get_recommended_item_list(page_no=page, page_size=100)
+        if res.get("error"):
+            return res
+        items = res.get("response", {}).get("item_list", [])
+        if not items:
+            break
+        all_items.extend(items)
+        if not res.get("response", {}).get("has_next_page", False):
+            break
+        page += 1
+    return {"response": {"item_list": all_items}}
+
+
+def get_product_campaign_id_list(item_id, page_no=1, page_size=50):
+    """Retorna IDs de campanhas associadas a um produto específico."""
+    return _call_ads("GET", "/api/v2/ads/get_product_level_campaign_id_list", {
+        "item_id":   int(item_id),
+        "page_no":   page_no,
+        "page_size": page_size,
+    })
+
+
+def get_campaign_setting_info(campaign_id):
+    """Retorna configurações detalhadas de uma campanha específica."""
+    return _call_ads("GET", "/api/v2/ads/get_product_level_campaign_setting_info", {
+        "campaign_id": int(campaign_id),
+    })
+
+
+def get_product_recommended_roi(item_id, budget):
+    """Retorna ROAS recomendado para um produto antes de criar campanha."""
+    return _call_ads("GET", "/api/v2/ads/get_product_recommended_roi_target", {
+        "item_id": int(item_id),
+        "budget":  float(budget),
+    })
+
+
+def get_budget_suggestion(item_id):
+    """Retorna sugestão de orçamento para criar campanha de um produto."""
+    return _call_ads("POST", "/api/v2/ads/get_create_product_ad_budget_suggestion",
+        body={
+            "reference_id":       f"budget-{item_id}",
+            "product_selection":  "manual",
+            "campaign_placement": "all",
+            "bidding_method":     "auto",
+            "item_id":            int(item_id),
+        })
+
+
+def create_manual_product_ads(item_id, budget, roas_target, start_date, bidding_method="auto"):
+    """
+    Cria campanha Item GMV Max (bidding_method='auto') ou Manual (='manual').
+    start_date: string 'DD-MM-YYYY'
+    roas_target: ex: 3.0
+    budget: orçamento diário em R$
+    """
+    return _call_ads(
+        "POST",
+        "/api/v2/ads/create_manual_product_ads",
+        body={
+            "reference_id":       f"camp-{item_id}-{int(time.time())}",
+            "item_id":            int(item_id),
+            "budget":             float(budget),
+            "start_date":         start_date,
+            "bidding_method":     bidding_method,
+            "roas_target":        float(roas_target),
+            "campaign_placement": "all",
+            "product_selection":  "manual",
+        },
+    )
+
+
+def get_campaign_daily_performance(campaign_id, start_date, end_date):
+    """
+    Retorna performance diária de uma campanha.
+    start_date / end_date: strings 'YYYY-MM-DD'
+    """
+    return _call_ads("GET", "/api/v2/ads/get_product_campaign_daily_performance", {
+        "campaign_id": int(campaign_id),
+        "start_date":  start_date,
+        "end_date":    end_date,
+    })
+
+
+def get_all_cpc_daily_performance(start_date, end_date):
+    """
+    Performance diária geral de todos os anúncios CPC da loja.
+    start_date / end_date: strings 'YYYY-MM-DD'
+    """
+    return _call_ads("GET", "/api/v2/ads/get_all_cpc_ads_daily_performance", {
+        "start_date": start_date,
+        "end_date":   end_date,
+    })
+
+
+# ── Aliases para compatibilidade ──────────────────────────────────────────────
+
+def get_product_campaign_list(page_no=1, page_size=100):
+    """Alias mantido para não quebrar chamadas existentes."""
+    return {"error": "Endpoint descontinuado. Use get_product_campaign_id_list(item_id) para buscar campanhas por produto."}
+
+
+def get_all_product_campaigns():
+    """Alias mantido para não quebrar chamadas existentes."""
+    return {"error": "Use get_recommended_item_list() para produtos elegíveis e get_product_campaign_id_list(item_id) por produto."}
+
+
+def update_campaign_roas(campaign_id, roas_target):
+    """Placeholder — Shopee Ads não tem endpoint de update isolado de ROAS no v2."""
+    return {"error": "A API Shopee Ads v2 não possui endpoint de atualização de ROAS isolado. Recrie a campanha com o novo ROAS."}
+
+
+def update_campaign_budget(campaign_id, budget):
+    """Placeholder — sem endpoint isolado de update de budget."""
+    return {"error": "A API Shopee Ads v2 não possui endpoint de atualização de orçamento isolado."}
+
+
+def toggle_campaign_status(campaign_id, action):
+    """Placeholder."""
+    return {"error": "Endpoint de toggle não disponível na API Ads v2 atual."}
+
+
+# ── Descontos / Promoções ─────────────────────────────────────────────────────
+
+def get_discount_list(status="ongoing", page_no=1, page_size=100):
+    """Lista promoções de desconto da loja."""
+    return _call("GET", "/api/v2/discount/get_discount_list", {
+        "discount_status": status,
+        "page_no":         page_no,
+        "page_size":       page_size,
+    })
+
+
+def get_discount_items(discount_id, page_no=1, page_size=100):
+    """Retorna os itens de uma promoção específica."""
+    return _call("GET", "/api/v2/discount/get_discount_item_list", {
+        "discount_id": int(discount_id),
+        "page_no":     page_no,
+        "page_size":   page_size,
+    })
+
+
+def create_discount(name, start_time, end_time):
+    """
+    Cria uma nova promoção de desconto.
+    start_time e end_time são timestamps unix.
+    """
+    return _call(
+        "POST",
+        "/api/v2/discount/add_discount",
+        body={
+            "discount_name": name,
+            "start_time":    int(start_time),
+            "end_time":      int(end_time),
+        },
+    )
+
+
+def add_discount_items(discount_id, item_list):
+    """
+    Adiciona produtos a uma promoção existente.
+    item_list: lista de dicts com item_id, item_promotion_price, purchase_limit, model_list
+    """
+    return _call(
+        "POST",
+        "/api/v2/discount/add_discount_item",
+        body={
+            "discount_id": int(discount_id),
+            "item_list":   item_list,
+        },
+    )
+
+
+def delete_discount_item(discount_id, item_id):
+    """Remove um produto de uma promoção."""
+    return _call(
+        "POST",
+        "/api/v2/discount/delete_discount_item",
+        body={
+            "discount_id": int(discount_id),
+            "item_id":     int(item_id),
+        },
+    )
+
+
+def end_discount(discount_id):
+    """Encerra uma promoção antes do prazo."""
+    return _call(
+        "POST",
+        "/api/v2/discount/end_discount",
+        body={"discount_id": int(discount_id)},
+    )
+
+
+def calcular_faturamento_pedido(order):
+    """
+    Calcula o faturamento real de um pedido somando
+    model_discounted_price * model_quantity_purchased de cada item.
+    """
+    total = 0.0
+    for item in order.get("item_list") or []:
+        preco = float(item.get("model_discounted_price") or item.get("model_original_price") or 0)
+        qtd   = int(item.get("model_quantity_purchased") or 1)
+        total += preco * qtd
+    return round(total, 2)
+
+
 # ── Ads / Campanhas ───────────────────────────────────────────────────────────
 
 def get_product_campaign_list(page_no=1, page_size=100):
