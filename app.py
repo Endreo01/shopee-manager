@@ -53,12 +53,15 @@ def _load_secrets():
                 st.session_state[k] = shopee[k]
         if st.session_state.get("access_token"):
             st.session_state["authenticated"] = True
-        # Carrega credenciais do app de Ads
+        # Carrega credenciais do app de Ads (incluindo token próprio)
         try:
             ads = st.secrets.get("shopee_ads", {})
             if ads.get("partner_id") and not st.session_state.get("ads_partner_id"):
                 st.session_state["ads_partner_id"]  = ads["partner_id"]
                 st.session_state["ads_partner_key"] = ads["partner_key"]
+            if ads.get("access_token") and not st.session_state.get("ads_access_token"):
+                st.session_state["ads_access_token"]  = ads["access_token"]
+                st.session_state["ads_refresh_token"] = ads.get("refresh_token","")
         except Exception:
             pass
         st.session_state["_secrets_loaded"] = True

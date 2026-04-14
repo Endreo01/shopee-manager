@@ -113,21 +113,36 @@ def _call(method, path, extra_params=None, body=None, require_auth=True):
 
 def _get_ads_creds():
     """
-    Lê credenciais do app de Ads (partner_id e partner_key separados).
-    shop_id e access_token são os mesmos do app principal.
+    Lê credenciais do app de Ads.
+    partner_id e partner_key são do app ZNP ADS.
+    access_token é o token específico do app de Ads (ads_access_token).
+    shop_id é o mesmo do app principal.
     """
     try:
         ads = st.secrets["shopee_ads"]
         pid  = str(ads["partner_id"]).strip()
         pkey = str(ads["partner_key"]).strip()
     except Exception:
-        # Fallback para session_state se configurado manualmente
         pid  = str(st.session_state.get("ads_partner_id", "")).strip()
         pkey = str(st.session_state.get("ads_partner_key", "")).strip()
 
-    # shop_id e access_token são os mesmos do app principal
-    _, _, sid, at, _ = _get_creds()
-    return pid, pkey, sid, at
+    # Access token ESPECÍFICO do app de Ads
+    at = (
+        st.session_state.get("ads_access_token") or
+        _secret_ads_key("access_token") or
+        ""
+    )
+
+    # shop_id do app principal
+    _, _, sid, _, _ = _get_creds()
+    return pid, pkey, sid, str(at).strip()
+
+
+def _secret_ads_key(key):
+    try:
+        return st.secrets["shopee_ads"][key]
+    except Exception:
+        return None
 
 
 def _call_ads(method, path, extra_params=None, body=None):
@@ -898,3 +913,88 @@ def toggle_campaign_status(campaign_id, action):
             "operation":   action,
         },
     )
+
+
+def get_ads_auth_url():
+    """Gera URL de autorização OAuth para o app de Ads."""
+    pid, pkey, _, _, _ = _get_ads_creds()
+    if not pid or not pkey:
+        return None
+    redirect  = "https://shopee-manager.streamlit.app"
+    path      = "/api/v2/shop/auth_partner"
+    timestamp = int(time.time())
+    base      = f"{_safe_int(pid)}{path}{timestamp}"
+    sign      = hmac.new(pkey.encode(), base.encode(), hashlib.sha256).hexdigest()
+    return (
+        f"{BASE_URL}{path}"
+        f"?partner_id={pid}"
+        f"&timestamp={timestamp}"
+        f"&sign={sign}"
+        f"&redirect={redirect}"
+    )
+
+
+def exchange_ads_code_for_token(code, shop_id=None):
+    """Troca o code OAuth do app de Ads pelo ads_access_token."""
+    pid, pkey, sid, _, _ = _get_ads_creds()
+    sid       = shop_id or sid
+    path      = "/api/v2/auth/token/get"
+    timestamp = int(time.time())
+    base      = f"{_safe_int(pid)}{path}{timestamp}"
+    sign      = hmac.new(pkey.encode(), base.encode(), hashlib.sha256).hexdigest()
+
+    params = {"partner_id": _safe_int(pid), "timestamp": timestamp, "sign": sign}
+    body   = {"code": code, "shop_id": _safe_int(sid), "partner_id": _safe_int(pid)}
+
+    try:
+        resp = requests.post(BASE_URL + path, params=params, json=body, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": str(e)}
+
+    at = data.get("access_token") or data.get("response", {}).get("access_token")
+    rt = data.get("refresh_token") or data.get("response", {}).get("refresh_token")
+
+    if at:
+        st.session_state["ads_access_token"]  = at
+        st.session_state["ads_refresh_token"] = rt or ""
+
+    return data
+
+
+def refresh_ads_access_token():
+    """Renova o access_token do app de Ads."""
+    pid, pkey, sid, _, _ = _get_ads_creds()
+    rt = st.session_state.get("ads_refresh_token") or ""
+    if not rt:
+        try:
+            rt = st.secrets["shopee_ads"].get("refresh_token","")
+        except Exception:
+            pass
+    if not rt:
+        return {"error": "Ads Refresh Token não encontrado."}
+
+    path      = "/api/v2/auth/access_token/get"
+    timestamp = int(time.time())
+    base      = f"{_safe_int(pid)}{path}{timestamp}"
+    sign      = hmac.new(pkey.encode(), base.encode(), hashlib.sha256).hexdigest()
+
+    params = {"partner_id": _safe_int(pid), "timestamp": timestamp, "sign": sign}
+    body   = {"refresh_token": rt, "shop_id": _safe_int(sid), "partner_id": _safe_int(pid)}
+
+    try:
+        resp = requests.post(BASE_URL + path, params=params, json=body, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": str(e)}
+
+    at_new = data.get("access_token") or data.get("response", {}).get("access_token")
+    rt_new = data.get("refresh_token") or data.get("response", {}).get("refresh_token")
+
+    if at_new:
+        st.session_state["ads_access_token"]  = at_new
+        st.session_state["ads_refresh_token"] = rt_new or rt
+
+    return data

@@ -189,38 +189,127 @@ anon_key = "sb_publishable_k6EdTrPP-YRrf74h3rqJ4Q_q6LgQacS"
 
 def _secao_ads_creds():
     st.markdown("---")
-    st.markdown("### 📣 Credenciais do App de Ads")
-    st.info("O app de Ads usa um Partner ID e Partner Key separados, mas o mesmo Shop ID e Access Token.")
+    st.markdown("### 📣 App de Ads — Credenciais e Autorização")
+    st.info("""
+    O app **ZNP ADS** (partner_id 2032349) precisa de sua própria autorização OAuth —
+    ele gera um `access_token` separado do app principal.
+    """)
+
+    # Captura automática do code via URL (retorno do OAuth)
+    params     = st.query_params
+    code_url   = params.get("code", "")
+    shopid_url = params.get("shop_id", "")
+
+    if code_url and st.session_state.get("ads_oauth_pending"):
+        st.success("✅ Code capturado! Clique abaixo para trocar pelo Ads Access Token.")
+        if st.button("🔑 Trocar Code pelo Ads Token", type="primary", key="ads_code_btn"):
+            with st.spinner("Trocando..."):
+                result = sc.exchange_ads_code_for_token(code_url, shop_id=shopid_url or None)
+            st.json(result)
+            if result.get("access_token"):
+                at = result["access_token"]
+                rt = result.get("refresh_token","")
+                st.session_state["ads_access_token"]  = at
+                st.session_state["ads_refresh_token"] = rt
+                st.session_state["ads_oauth_pending"] = False
+                st.success("✅ Ads Access Token obtido!")
+                st.warning("⚠️ Copie e adicione nos Secrets:")
+                st.code(f'access_token  = "{at}"\nrefresh_token = "{rt}"', language="toml")
+                st.query_params.clear()
+            else:
+                st.error(f"❌ {result.get('error','Erro desconhecido')}")
+        st.divider()
 
     col1, col2 = st.columns(2)
     with col1:
         ads_partner_id = st.text_input(
             "Ads Partner ID *",
-            value=st.session_state.get("ads_partner_id", "") or _secret_ads("partner_id") or "",
+            value=st.session_state.get("ads_partner_id","") or _secret_ads("partner_id") or "",
             placeholder="Ex: 2032349"
         )
     with col2:
         ads_partner_key = st.text_input(
             "Ads Partner Key *",
-            value=st.session_state.get("ads_partner_key", "") or _secret_ads("partner_key") or "",
-            type="password",
-            placeholder="shpk..."
+            value=st.session_state.get("ads_partner_key","") or _secret_ads("partner_key") or "",
+            type="password", placeholder="shpk..."
         )
 
-    if st.button("💾 Salvar Credenciais de Ads", use_container_width=False):
+    if st.button("💾 Salvar Credenciais de Ads"):
         if not ads_partner_id or not ads_partner_key:
-            st.error("Preencha o Ads Partner ID e Ads Partner Key.")
+            st.error("Preencha o Ads Partner ID e Partner Key.")
         else:
             st.session_state["ads_partner_id"]  = ads_partner_id.strip()
             st.session_state["ads_partner_key"] = ads_partner_key.strip()
-            st.success("✅ Credenciais de Ads salvas!")
+            st.success("✅ Credenciais salvas!")
 
-    st.markdown("#### 📝 Secrets do Streamlit — bloco Ads")
+    st.divider()
+    st.markdown("#### Passo 1 — Autorizar o App de Ads na Shopee")
+    st.info("Clique para gerar o link de autorização do app ZNP ADS. Após autorizar, você voltará aqui com o code capturado automaticamente.")
+
+    if st.button("🔗 Gerar URL de Autorização do App de Ads"):
+        if not st.session_state.get("ads_partner_id") or not st.session_state.get("ads_partner_key"):
+            st.warning("Salve o Ads Partner ID e Ads Partner Key antes.")
+        else:
+            url = sc.get_ads_auth_url()
+            if url:
+                st.session_state["ads_oauth_pending"] = True
+                st.markdown(f"### [👉 Clique aqui para autorizar o App de Ads]({url})")
+                st.code(url, language="text")
+            else:
+                st.error("Não foi possível gerar a URL. Verifique as credenciais.")
+
+    st.divider()
+    st.markdown("#### Passo 2 — Code Manual (fallback)")
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+        ads_code_manual = st.text_input("Code do Ads", placeholder="Cole o code aqui", key="ads_code_m")
+    with col_c2:
+        ads_shop_manual = st.text_input("Shop ID", value=st.session_state.get("shop_id",""), key="ads_shop_m")
+
+    if st.button("🔑 Trocar Code Manualmente (Ads)", key="ads_manual_btn"):
+        if not ads_code_manual:
+            st.warning("Cole o code.")
+        else:
+            with st.spinner("Trocando..."):
+                result = sc.exchange_ads_code_for_token(ads_code_manual, shop_id=ads_shop_manual or None)
+            st.json(result)
+            if result.get("access_token"):
+                at = result["access_token"]
+                rt = result.get("refresh_token","")
+                st.session_state["ads_access_token"]  = at
+                st.session_state["ads_refresh_token"] = rt
+                st.success("✅ Ads Token obtido!")
+                st.warning("⚠️ Copie e adicione nos Secrets:")
+                st.code(f'access_token  = "{at}"\nrefresh_token = "{rt}"', language="toml")
+            else:
+                st.error(f"❌ {result.get('error','Erro')}")
+
+    st.divider()
+    st.markdown("#### Renovar Ads Access Token")
+    if st.button("🔄 Renovar Ads Token"):
+        with st.spinner("Renovando..."):
+            result = sc.refresh_ads_access_token()
+        if result.get("access_token"):
+            at = result["access_token"]
+            st.success("✅ Token renovado!")
+            st.warning("⚠️ Copie e adicione nos Secrets:")
+            st.code(f'access_token = "{at}"', language="toml")
+        else:
+            st.error(f"❌ {result.get('error','Erro')}")
+
+    st.divider()
+    st.markdown("#### 📊 Status dos Tokens de Ads")
+    ca, cb = st.columns(2)
+    ca.metric("Ads Access Token",  "✅ OK" if st.session_state.get("ads_access_token") else "❌ Vazio")
+    cb.metric("Ads Refresh Token", "✅ OK" if st.session_state.get("ads_refresh_token") else "❌ Vazio")
+
+    st.markdown("#### 📝 Secrets completo para o App de Ads")
     st.code("""[shopee_ads]
-partner_id  = "2032349"
-partner_key = "shpk6b746761466d436f414b7353414556534c697771754d64705a4777465846"
+partner_id    = "2032349"
+partner_key   = "shpk6b746761466d436f414b7353414556534c697771754d64705a4777465846"
+access_token  = "token_gerado_apos_autorizar"
+refresh_token = "refresh_gerado_apos_autorizar"
 """, language="toml")
-    st.caption("Adicione este bloco nos Secrets do Streamlit Cloud para persistir as credenciais de Ads.")
 
 
 def render():
